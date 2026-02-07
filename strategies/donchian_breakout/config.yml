@@ -1,0 +1,78 @@
+strategy_name: donchian_breakout
+description: "Donchian breakout with basic robustness filters (ADX + trend)."
+
+market:
+  exchange: binance
+  symbol: BTCUSDT
+  base_timeframe: 4h
+
+timeframes:
+  signal_tf: 4h
+  entry_tf: 4h
+params:
+  entry_lookback: 20
+  exit_lookback: 10
+  breakout_buffer_atr: 0.1
+  trend_filter_enabled: true
+  trend_ema_length: 200
+stop_loss:
+  atr_length: 20
+  atr_multiplier: 2.5
+risk:
+  sizing_mode: account_size
+  risk_per_trade_pct: 1.0
+  account_size: 10000.0
+execution:
+  max_positions: 1
+
+# Minimal required schema fields (safe defaults)
+moving_averages:
+  ema5:
+    enabled: false
+    length: 5
+  ema100:
+    enabled: false
+    length: 100
+
+alignment_rules:
+  long:
+    condition: ""
+    macd_bars_signal_tf: 0
+    macd_bars_entry_tf: 0
+  short:
+    condition: ""
+    macd_bars_signal_tf: 0
+    macd_bars_entry_tf: 0
+
+backtest:
+  commissions: 0.0004
+  slippage_ticks: 0.0
+
+filters:
+  session_filters:
+    enabled: false
+  sma_slope:
+    enabled: false
+  ema_separation:
+    enabled: false
+  higher_highs_lows:
+    enabled: false
+
+calendar_filters:
+  master_filters_enabled: true
+
+regime_filters:
+  adx:
+    enabled: true
+    period: 14
+    # Slightly relaxed vs default; tune during validation.
+    min_crypto: 22.0
+
+take_profit:
+  enabled: true
+  levels:
+    - enabled: true
+      type: "r_based"
+      target_r: 4.0
+      exit_pct: 100.0
+

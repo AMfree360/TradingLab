@@ -1,0 +1,140 @@
+# Market profiles define market-specific settings for different asset classes
+# These can be referenced or overridden in strategy configs
+
+markets:
+  # Crypto markets (Binance)
+  BTCUSDT:
+    exchange: binance
+    symbol: BTCUSDT
+    asset_class: crypto
+    market_type: spot
+    leverage: 1.0
+    commission_rate: 0.0004  # 0.04% (Binance spot)
+    slippage_ticks: 0.0
+    min_trade_size: 10.0  # Minimum trade size in quote currency (USDT)
+    price_precision: 2  # Decimal places for price
+    quantity_precision: 6  # Decimal places for quantity
+    
+  ETHUSDT:
+    exchange: binance
+    symbol: ETHUSDT
+    asset_class: crypto
+    market_type: spot
+    leverage: 1.0
+    commission_rate: 0.0004
+    slippage_ticks: 0.0
+    min_trade_size: 10.0
+    price_precision: 2
+    quantity_precision: 6
+
+  # BTCUSDT Perpetual Futures (Binance) - Leverage-Based Margin System
+  # NOTE: To use futures, you need to either:
+  # 1. Use a different symbol (e.g., BTCUSDT-PERP) and reference this profile
+  # 2. Override asset_class in your strategy config
+  # 3. Temporarily modify the BTCUSDT entry above to set asset_class: futures
+  #
+  # Binance futures use LEVERAGE-BASED margin, not fixed margin per contract
+  # Initial Margin = Notional Value / Leverage
+  # Maintenance Margin = Notional Value × Maintenance Margin Rate
+  BTCUSDT_FUTURES:
+    exchange: binance
+    symbol: BTCUSDT
+    asset_class: futures  # CRITICAL: Must be "futures" for futures behavior
+    market_type: futures
+    leverage: 5.0  # Default leverage (can be changed per position, up to 125x for BTCUSDT)
+    margin_mode: cross  # "cross" (account-wide) or "isolated" (position-specific)
+    maintenance_margin_rate: 0.005  # 0.5% maintenance margin (Binance typical)
+    contract_size: 1.0  # 1 BTC per contract
+    tick_value: 0.01  # $0.01 per tick per contract
+    commission_per_contract: 2.0  # $2 per contract per side (Binance typical)
+    commission_rate: 0.0  # Not used for futures (use commission_per_contract)
+    slippage_ticks: 0.01  # 1 tick slippage (tick size = 0.01)
+    min_trade_size: 1.0  # Minimum 1 contract
+    price_precision: 2  # Prices in USDT (e.g., 50000.00)
+    quantity_precision: 0  # Whole contracts only
+    # NOTE: initial_margin_per_contract is NOT set - uses leverage-based calculation
+    # Example: 1 BTC at $50k with 10x leverage = $5,000 initial margin
+    #          Maintenance margin = $50k × 0.005 = $250
+
+  # Forex markets
+  EURUSD:
+    exchange: oanda  # or fxcm, interactive_brokers, etc.
+    symbol: EURUSD
+    asset_class: forex
+    market_type: spot
+    leverage: 30.0  # Typical retail forex leverage (30:1 to 50:1, MT5 often uses 30:1)
+    commission_rate: 0.000035  # Forex typically uses spreads, not commissions
+    slippage_ticks: 2  # Typical slippage in pips
+    min_trade_size: 0.01  # Minimum lot size
+    price_precision: 5  # Forex prices have 5 decimals (e.g., 1.12345)
+    quantity_precision: 2  # Lot sizes (e.g., 0.01, 0.10, 1.00)
+    pip_value: 0.0001  # For most pairs, 1 pip = 0.0001
+    contract_size: 100000  # Standard lot size in base currency
+    
+  GBPUSD:
+    exchange: oanda
+    symbol: GBPUSD
+    asset_class: forex
+    market_type: spot
+    leverage: 1.0
+    commission_rate: 0.0
+    slippage_ticks: 0.5
+    min_trade_size: 0.01
+    price_precision: 5
+    quantity_precision: 2
+    pip_value: 0.0001
+    contract_size: 100000
+
+  # Stock markets (example)
+  AAPL:
+    exchange: nasdaq
+    symbol: AAPL
+    asset_class: stock
+    market_type: spot
+    leverage: 1.0
+    commission_rate: 0.001  # 0.1% typical for stocks
+    slippage_ticks: 0.01  # $0.01 for stocks
+    min_trade_size: 1.0  # Minimum 1 share
+    price_precision: 2
+    quantity_precision: 0  # Whole shares only
+
+  # Futures markets
+  MES:
+    exchange: cme  # Chicago Mercantile Exchange
+    symbol: MES
+    asset_class: futures
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 0.87  # Fixed $0.87 per contract per side (NinjaTrader)
+    commission_rate: 0.0  # Not used for futures (use commission_per_contract instead)
+    slippage_ticks: 0.25  # 1 tick slippage per side (NinjaTrader live broker average), tick size = 0.25 points
+    min_trade_size: 1.0  # Minimum 1 contract
+    price_precision: 2  # Prices in index points (e.g., 4500.25)
+    quantity_precision: 0  # Whole contracts only
+    tick_value: 1.25  # $1.25 per tick per contract
+    contract_size: 5.0  # $5 per index point
+    initial_margin_per_contract: 2219.0  # Initial margin (overnight)
+    intraday_margin_per_contract: 50.0  # Day trading margin (intraday only)
+
+# Asset class defaults (used when market not found in profiles)
+asset_class_defaults:
+  crypto:
+    commission_rate: 0.0004
+    slippage_ticks: 0.0
+    price_precision: 2
+    quantity_precision: 6
+    
+  forex:
+    commission_rate: 0.0
+    slippage_ticks: 0.5
+    price_precision: 5
+    quantity_precision: 2
+    pip_value: 0.0001
+    contract_size: 100000
+    
+  stock:
+    commission_rate: 0.001
+    slippage_ticks: 0.01
+    price_precision: 2
+    quantity_precision: 0
+

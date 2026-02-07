@@ -1,0 +1,74 @@
+# Master Trade Management Configuration
+# These are defaults applied to all strategies
+# Can be overridden at strategy level
+
+master_trade_management:
+  # Stop Loss Management
+  stop_loss:
+    type: "SMA"
+    length: 50
+    buffer_pips: 3.0
+    buffer_unit: "pip"  # "pip", "price", or "points"
+    pip_size: 0.0001
+    min_stop_distance:
+      enabled: false
+      type: "fixed"  # "atr" (ATR-based) or "fixed" (fixed pips/points/price)
+      atr_multiplier: 1.5  # For ATR type
+      atr_period: 14  # For ATR type
+      fixed_distance_pips: 6.0  # For fixed type (default: 6 pips/points/price)
+      mode: "skip"  # "skip" (reject trade), "use_atr" (use ATR-based stop), or "use_fixed" (use fixed distance stop)
+  
+  # Trailing Stop Management
+  trailing_stop:
+    enabled: false
+    type: "EMA"  # "EMA", "SMA", "ATR", "percentage", "fixed_distance"
+    length: 21  # For EMA/SMA
+    atr_period: 14  # For ATR type
+    atr_multiplier: 1.5  # For ATR type
+    percentage: 2.0  # For percentage type (e.g., 2.0 = 2% trailing)
+    fixed_distance_pips: 10.0  # For fixed_distance type
+    activation_type: "r_based"  # "r_based", "atr_based", "price_based", "time_based"
+    activation_r: 0.5  # For r_based activation
+    activation_atr_multiplier: 1.0  # For atr_based activation
+    activation_price_pips: 20.0  # For price_based activation
+    activation_time_minutes: 60  # For time_based activation
+    stepped: true
+    min_move_pips: 7.0
+    min_move_overrides: {}  # Per-instrument overrides
+  
+  # Take Profit Management
+  take_profit:
+    enabled: true
+    levels:
+      - enabled: true
+        type: "r_based"  # "r_based", "atr_based", "price_based", "percentage_based", "time_based"
+        target_r: 3.0
+        exit_pct: 100.0  # Percentage of position to exit (100 = full exit)
+      # Example: Multiple TP levels
+      # - enabled: true
+      #   type: "r_based"
+      #   target_r: 2.0
+      #   exit_pct: 50.0  # Exit 50% at 2R
+      # - enabled: true
+      #   type: "r_based"
+      #   target_r: 3.0
+      #   exit_pct: 50.0  # Exit remaining 50% at 3R
+  
+  # Partial Exit Management
+  partial_exit:
+    enabled: false
+    levels:
+      - enabled: true
+        type: "r_based"  # "r_based", "atr_based", "price_based", "percentage_based", "time_based"
+        level_r: 1.5
+        exit_pct: 80.0  # Exit 80% at 1.5R
+      # Example: Multiple partial exits
+      # - enabled: true
+      #   type: "r_based"
+      #   level_r: 1.0
+      #   exit_pct: 30.0  # Exit 30% at 1R
+      # - enabled: true
+      #   type: "r_based"
+      #   level_r: 2.0
+      #   exit_pct: 50.0  # Exit 50% at 2R
+

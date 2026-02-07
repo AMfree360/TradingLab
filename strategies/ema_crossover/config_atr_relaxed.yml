@@ -1,0 +1,65 @@
+strategy_name: ema_crossover
+description: "Relaxed EMA crossover with ATR stop (confirmation disabled) to produce more trades for testing."
+
+market:
+  exchange: binance
+  symbol: BTCUSDT
+  base_timeframe: 1m
+
+timeframes:
+  signal_tf: "4h"
+  entry_tf: "4h"
+
+moving_averages:
+  ema5:
+    enabled: true
+    length: 5
+  ema100:
+    enabled: true
+    length: 100
+
+alignment_rules:
+  long:
+    condition: "ema5 > ema100"
+    macd_bars_signal_tf: 1
+    macd_bars_entry_tf: 0
+  short:
+    condition: "ema5 < ema100"
+    macd_bars_signal_tf: 1
+    macd_bars_entry_tf: 0
+
+stop_loss:
+  type: "EMA"
+  atr_enabled: true
+  atr_length: 14
+  atr_multiplier: 3.0
+
+entry:
+  confirmation_required: false
+  ema_separation_pct: 0.0
+  trend_slope_bars: 1
+
+trailing_stop:
+  enabled: false
+
+partial_exit:
+  enabled: false
+
+take_profit:
+  enabled: false
+
+risk:
+  sizing_mode: equity
+  risk_per_trade_pct: 1.0
+  account_size: 10000.0
+
+execution:
+  max_positions: 1
+
+backtest:
+  commissions: 0.0004
+  slippage_ticks: 0.0
+
+filters:
+  session_filters:
+    enabled: false

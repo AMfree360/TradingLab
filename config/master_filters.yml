@@ -1,0 +1,199 @@
+# Master Filter Configuration
+# These are defaults applied to all strategies
+# Can be overridden at strategy level
+
+master_filters:
+  calendar_filters:
+    master_filters_enabled: true
+    
+    # Day of week filter (to be implemented)
+    day_of_week:
+      enabled: true
+      allowed_days: [0, 1, 2, 3, 4]  # Mon-Fri (0=Monday, 6=Sunday)
+    
+    # Month of year filter (to be implemented)
+    month_of_year:
+      enabled: false
+      allowed_months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    
+    # Trading sessions (to be implemented)
+    trading_sessions:
+      Asia:
+        enabled: true
+        start: "23:00"
+        end: "08:00"
+      London:
+        enabled: true
+        start: "07:00"
+        end: "16:00"
+      NewYork:
+        enabled: true
+        start: "13:00"
+        end: "21:00"
+    
+    # Time blackouts - blocks signal generation during specific time windows
+    time_blackouts_enabled: false
+    time_blackouts:
+      slots:
+        slot_1:
+          enabled: false
+          name: "Lunch Break"
+          start_time: "13:00"
+          end_time: "13:45"
+          days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+          symbols: []  # Empty = all symbols
+        slot_2:
+          enabled: false
+          name: ""
+          start_time: ""
+          end_time: ""
+          days: []
+          symbols: []
+        slot_3:
+          enabled: false
+          name: ""
+          start_time: ""
+          end_time: ""
+          days: []
+          symbols: []
+        slot_4:
+          enabled: false
+          name: ""
+          start_time: ""
+          end_time: ""
+          days: []
+          symbols: []
+        slot_5:
+          enabled: false
+          name: ""
+          start_time: ""
+          end_time: ""
+          days: []
+          symbols: []
+  
+  # News filter - blocks trading around economic events
+  news_filter:
+    enabled: true
+    default_buffer_minutes: 15  # Default buffer before/after news events
+    slots:
+      slot_1:
+        enabled: true
+        name: "NFP"
+        start_time: "13:15"
+        end_time: "13:45"
+        buffer_before: 15
+        buffer_after: 15
+        symbols: []  # Empty = all symbols
+      slot_2:
+        enabled: true
+        name: "FOMC"
+        start_time: "18:45"
+        end_time: "19:15"
+        buffer_before: 15
+        buffer_after: 15
+        symbols: []
+      slot_3:
+        enabled: true
+        name: "ECB"
+        start_time: "13:30"
+        end_time: "14:00"
+        buffer_before: 15
+        buffer_after: 15
+        symbols: []
+      slot_4:
+        enabled: true
+        name: "BOE"
+        start_time: "11:45"
+        end_time: "12:15"
+        buffer_before: 15
+        buffer_after: 15
+        symbols: []
+      slot_5:
+        enabled: true
+        name: "US CPI"
+        start_time: "13:15"
+        end_time: "13:45"
+        buffer_before: 15
+        buffer_after: 15
+        symbols: []
+  
+  # Regime filters
+  regime_filters:
+    # ADX filter - trend strength
+    adx:
+      enabled: true
+      period: 14
+      min_forex: 23.0
+      min_indices: 20.0
+      min_metals: 25.0
+      min_commodities: 26.0
+      min_crypto: 28.0
+    
+    # ATR Percentile filter (to be implemented)
+    atr_percentile:
+      enabled: false
+      lookback: 100
+      min_percentile: 30.0
+    
+    # ATR Threshold filter - min/max ATR limits
+    atr_threshold:
+      enabled: false
+      atr_period: 14
+      # Direct price units (works for all asset classes)
+      min_atr: null
+      max_atr: null
+      # Forex-specific (pips)
+      min_atr_pips: null
+      max_atr_pips: null
+      # Stocks/Indices/Futures-specific (points)
+      min_atr_points: null
+      max_atr_points: null
+    
+    # EMA Expansion filter (to be implemented)
+    ema_expansion:
+      enabled: false
+      lookback: 5
+    
+    # Swing filter (to be implemented)
+    swing:
+      enabled: false
+      lookback: 50
+      min_trend_score: 0.60
+    
+    # Composite regime filter (to be implemented)
+    composite:
+      enabled: false
+      min_score: 0.55
+      use_adx: true
+      use_atr_percentile: true
+      use_ema_expansion: true
+      use_swing: false
+    
+    # SMA Distance Quality filter
+    sma_distance:
+      enabled: false
+      min_distance_atr: 0.5
+      middle_tf: "5m"
+      higher_tf: "15m"
+      sma_period: 50
+    
+    # SMA Slope filter
+    sma_slope:
+      enabled: false
+      min_slope: 0.1
+      middle_tf: "5m"
+      higher_tf: "15m"
+      middle_lookback: 3
+      higher_lookback: 2
+      sma_period: 50
+  
+  # Volume filters
+  volume_filters:
+    # Volume Increasing filter
+    volume_increasing:
+      enabled: false
+      mode: "volume_oscillator"  # "raw_volume" or "volume_oscillator"
+      middle_tf: "5m"
+      higher_tf: "15m"
+      oscillator_fast: 15
+      oscillator_slow: 30

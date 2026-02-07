@@ -1,0 +1,89 @@
+# Validation Criteria Configuration
+# 
+# This file defines pass/fail criteria for each validation phase.
+# Adjust these thresholds based on your risk tolerance and requirements.
+# 
+# Suggested defaults:
+# - Monte Carlo: 95% confidence (p-value < 0.05)
+# - Training PF: >= 1.4 (practical baseline; MC + OOS should do most of the gating)
+# - Training Sharpe: >= 0.5 (avoid admitting near-noise strategies)
+# - OOS PF: >= 1.5 with 70% consistency
+# - Walk-Forward: Test PF should be within 80% of Train PF (prevents overfitting)
+#
+# Notes:
+# - Sharpe depends on how returns are sampled/constructed; treat it as a coarse filter.
+# - If you run very few trades, consider raising trade-count minimums rather than loosening PF/Sharpe.
+
+training:
+  # Monte Carlo Permutation Test
+  # Proves strategy edge is better than random chance
+  monte_carlo_p_value_max: 0.05  # Maximum p-value (0.05 = 95% confidence)
+  monte_carlo_min_percentile: 90.0  # Minimum percentile rank (90th percentile)
+  # Monte Carlo runtime/defaults
+  monte_carlo_default_iterations: 1000  # Default iterations used by Monte Carlo engines
+  # Recommendation: use at least 1000 iterations for reliable p-values; increase for
+  # higher statistical stability (e.g., 2000-5000) when compute budget allows.
+  
+  # Parameter Sensitivity Analysis
+  # Tests robustness to parameter changes
+  sensitivity_max_cv: 0.3  # Maximum coefficient of variation (30% allowed)
+  sensitivity_min_trades: 30  # Minimum trades for sensitivity test
+  
+  # Training Data Backtest Quality
+  # Ensures strategy is profitable on training data
+  training_min_profit_factor: 1.4  # Minimum PF on training data
+  training_min_sharpe: 0.5  # Minimum Sharpe ratio
+  training_min_trades: 30  # Minimum number of trades
+  training_max_drawdown_pct: 20.0  # Maximum allowed max drawdown on training (percent)
+
+oos:
+  # Walk-Forward Analysis
+  # Tests strategy on unseen out-of-sample data
+  wf_min_test_pf: 1.5  # Minimum PF on test periods
+  wf_min_consistency_score: 0.7  # Minimum consistency (70%)
+  wf_max_pf_std: 0.5  # Maximum standard deviation of test PF
+  wf_min_test_periods: 3  # Minimum number of test periods
+  wf_train_test_pf_ratio_min: 0.8  # Test PF must be at least 80% of Train PF (prevents overfitting)
+  
+  # New Walk-Forward Metrics (Industry Standard)
+  wf_min_wfe: 0.6  # Minimum Walk-Forward Efficiency (0.6 = 60% = test PF ≥ 60% of train PF)
+  wf_min_oos_consistency: 0.6  # Minimum OOS Consistency Score (0.6 = 60% of periods with PF ≥ threshold)
+  wf_min_binomial_p_value: 0.1  # Maximum p-value for binomial test (statistical significance)
+  wf_min_trades_per_period: 30  # Minimum trades per test period for statistical significance
+  
+  # Overall OOS Performance
+  oos_min_sharpe: 0.5  # Minimum Sharpe ratio on OOS data
+  oos_max_drawdown_pct: 40.0  # Maximum acceptable drawdown (percent)
+
+stationarity:
+  # Performance Degradation Detection
+  # Determines when to retrain strategy after going live
+  degradation_threshold_pct: 0.85  # Retrain when PF drops to 85% of baseline (relative threshold)
+  min_acceptable_pf: 1.5  # Absolute minimum PF threshold (retrain if PF < this)
+  min_analysis_periods: 5  # Minimum periods for analysis
+  
+  # Walk-Forward Window Configuration
+  # Different strategies may need different window sizes
+  # For sparse strategies (~30 trades/month), longer windows are better
+  max_days: 30  # Maximum window size to test (default: 30 days)
+  step_days: 1  # Step size for window testing (default: 1 day)
+  
+  # Baseline Windows (3-window approach for robust baseline)
+  # Uses 3 stabilized windows and averages them as baseline
+  # Recommended for sparse strategies (30 trades/month or less)
+  baseline_window1_start: 15  # First baseline window start (days)
+  baseline_window1_end: 20   # First baseline window end (days)
+  baseline_window2_start: 20 # Second baseline window start (days)
+  baseline_window2_end: 25   # Second baseline window end (days)
+  baseline_window3_start: 25 # Third baseline window start (days)
+  baseline_window3_end: 30   # Third baseline window end (days)
+  
+  # Conditional Metrics Thresholds
+  win_rate_degradation_pct: 0.20  # Win rate drop threshold (20% = 0.20)
+  payoff_degradation_pct: 0.30    # Payoff ratio drop threshold (30% = 0.30)
+  big_win_freq_degradation_pct: 0.50  # Big win frequency drop threshold (50% = 0.50)
+  stability_cv_threshold: 0.20    # Coefficient of variation for stability (20% = 0.20)
+  
+  # Big Win Detection
+  big_win_threshold_r: 2.0  # R-multiple threshold for "big win" (default: 2.0)
+

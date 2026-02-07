@@ -1,0 +1,7 @@
+# EMA Crossover Strategy - ETHUSDT Market Profile Example
+# This config overrides only the market and symbol for ETHUSDT
+
+market:
+  exchange: binance
+  symbol: ETHUSDT
+  base_timeframe: 1m

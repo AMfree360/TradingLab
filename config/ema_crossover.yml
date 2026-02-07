@@ -1,0 +1,17 @@
+# EMA Crossover Strategy Config (default)
+strategy_name: ema_crossover
+ema_fast: 5
+ema_slow: 100
+stoploss_pct: 0.01         # 1% stoploss
+trailing_pct: 0.01         # 1% trailing stop
+partial_pct: 0.5           # Take 50% partial at target
+partial_tp: 0.01           # Partial take-profit at 1% gain
+filters:
+  master_filters_enabled: true
+  trade_management:
+    stoploss: true
+    trailing_stop: true
+    partials:
+      enabled: true
+      percent: 0.5
+      take_profit: 0.01

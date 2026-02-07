@@ -1,0 +1,16 @@
+strategy_name: donchian_breakout
+timeframes:
+  signal_tf: 4h
+  entry_tf: 4h
+params:
+  entry_lookback: 20
+  exit_lookback: 10
+stop_loss:
+  atr_length: 20
+  atr_multiplier: 2.5
+risk:
+  sizing_mode: account_size
+  risk_per_trade_pct: 1.0
+  account_size: 10000.0
+execution:
+  max_positions: 1

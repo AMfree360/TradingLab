@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# Data files (keep structure, ignore actual data)
+data/raw/*
+data/processed/*
+data/manifests/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/manifests/.gitkeep
+
+# Reports
+reports/*
+!reports/.gitkeep
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Logs
+*.log
+logs/
+data/logs/*
+!data/logs/.gitkeep
+
+# Secrets and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets.yml
+credentials
+
+# Validation state and local runtime
+.validation_state/
+
+# Phase/validation state artifacts (non-hidden dir)
+validation_state/
+
+# Local experiment registry / scratch
+.experiments/
+
+# Exclude local virtualenvs (ensure no venv accidentally committed)
+.venv/
+venv/
+env/
+
+

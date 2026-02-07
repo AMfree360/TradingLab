@@ -1,0 +1,7 @@
+# EMA Crossover Strategy - BTCUSDT Market Profile Example
+# This config overrides only the market and symbol for BTCUSDT
+
+market:
+  exchange: binance
+  symbol: BTCUSDT
+  base_timeframe: 1m

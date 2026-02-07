@@ -1,0 +1,34 @@
+# Default configuration values for trading lab
+
+# Global settings
+global:
+  timezone: UTC
+  data_dir: "./data"
+  reports_dir: "./reports"
+  log_level: INFO
+
+# Default backtest settings
+backtest:
+  commissions: 0.0004  # Default Binance commission (0.04%)
+  slippage_ticks: 0.0
+  include_commissions: true
+  include_slippage: true
+
+# Default risk settings
+risk:
+  sizing_mode: equity  # or account_size
+  risk_per_trade_pct: 1.0
+  account_size: 10000
+  max_positions: 1
+
+# Default validation settings
+validation:
+  monte_carlo:
+    n_iterations: 1000
+    seed: 42
+    metrics: ["final_pnl", "sharpe", "pf"]
+  walkforward:
+    window_type: expanding  # or rolling
+    min_training_period: "1 year"
+
+

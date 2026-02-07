@@ -1,0 +1,112 @@
+# EMA Crossover Strategy - Main Config
+strategy_name: ema_crossover
+# 5 EMA crosses 100 EMA: long on bullish cross, short on bearish cross. Includes stoploss, trailing stop, and partial exits.
+
+description: "Default EMA crossover (5/100) with full trade management."
+
+market:
+  exchange: binance
+  symbol: BTCUSDT
+  base_timeframe: 1m
+
+timeframes:
+  signal_tf: "1h"
+  entry_tf: "15m"
+
+moving_averages:
+  ema5:
+    enabled: true
+    length: 5
+  ema100:
+    enabled: true
+    length: 100
+
+alignment_rules:
+  long:
+    condition: "ema5 > ema100"
+    macd_bars_signal_tf: 1
+    macd_bars_entry_tf: 0
+  short:
+    condition: "ema5 < ema100"
+    macd_bars_signal_tf: 1
+    macd_bars_entry_tf: 0
+
+stop_loss:
+  type: "EMA"
+  length: 50
+  buffer_pips: 1.0
+  buffer_unit: "price"
+
+trailing_stop:
+  enabled: true
+  type: "percentage"
+  percent: 1.0
+  activation_type: "r_based"
+  activation_r: 1.0
+  stepped: true
+  min_move_pips: 2.0
+
+partial_exit:
+  enabled: true
+  levels:
+    - enabled: true
+      type: "r_based"
+      level_r: 1.0
+      exit_pct: 50.0
+    - enabled: true
+      type: "r_based"
+      level_r: 2.0
+      exit_pct: 50.0
+
+take_profit:
+  enabled: true
+  levels:
+    - enabled: true
+      type: "r_based"
+      target_r: 3.0
+      exit_pct: 100.0
+
+risk:
+  sizing_mode: equity
+  risk_per_trade_pct: 1.0
+  account_size: 10000.0
+
+execution:
+  max_positions: 1
+
+backtest:
+  commissions: 0.0004
+  slippage_ticks: 0.0
+
+# Relax filters for testing: disable ADX and session filters to allow signals
+filters:
+  session_filters:
+    enabled: false
+  sma_slope:
+    enabled: false
+  ema_separation:
+    enabled: false
+  higher_highs_lows:
+    enabled: false
+
+# Calendar/master filters
+calendar_filters:
+  master_filters_enabled: false
+  trading_sessions:
+    Asia:
+      enabled: true
+      start: "00:00"
+      end: "00:00"
+    London:
+      enabled: true
+      start: "00:00"
+      end: "00:00"
+    NewYork:
+      enabled: true
+      start: "00:00"
+      end: "00:00"
+
+# Regime filters: disable ADX for testing
+regime_filters:
+  adx:
+    enabled: false

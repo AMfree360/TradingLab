@@ -1,0 +1,214 @@
+Road Map — 2026-02-07
+
+Goal (next session): (1) push `donchian_breakout` toward profitability, (2) start the data downloader / dataset request spec so research runs are easy.
+
+Today’s progress (what changed since 2026-02-06):
+  - Committed and validated the “iteration loop + guardrails” work:
+     - Execution realism + anti-lookahead hardening.
+     - Dataset slice locking + manifest helpers.
+     - Phase 2 consumed-on-attempt semantics.
+     - Deterministic Monte Carlo seeding tests.
+     - Full test suite passes.
+  - Experiment ops + tooling:
+     - Experiment registry module + CLI utilities.
+     - Added/expanded scripts for running phases and resampling.
+  - Strategy and filter scaffolding:
+     - Donchian breakout strategy + configs.
+     - Filter system + calendar/day-of-week filter + tests.
+     - EMA crossover strategy/config scaffolding (baseline + variants).
+  - CI + docs:
+     - Added GitHub Actions CI workflow.
+     - Updated README, RUNBOOK, SESSION_NOTES, and docs to match current behavior.
+  - Hygiene:
+     - Ignore local run artifacts (manifests, validation state, local registry DB) so outputs don’t get accidentally committed.
+
+Top priorities for next session (ordered):
+
+1) Optimize `donchian_breakout` to profitability
+   - Use Phase 1 reports to identify the failure mode:
+      - Universal MC gating robustness vs randomized-entry diagnostics.
+      - Drawdown/edge stability and parameter brittleness.
+   - Improve strategy mechanics (one change at a time):
+      - Entry: breakout confirmation, volatility/trend regime filters, time-of-week filters.
+      - Exit/risk: ATR stop/target calibration, trailing logic, time-stop, re-entry cooldown.
+   - Validation loop:
+      - Iterate with `--mc-iterations 100`.
+      - Confirm with `--mc-iterations 1000` only when it looks promising.
+
+2) Data downloader / dataset pipeline (make research easy)
+   - Define a single dataset request spec:
+      - symbol, venue, market type (spot/futures), timeframe, start/end, timezone
+      - storage paths: `data/raw/` + `data/processed/`
+   - Implement a downloader that can:
+      - fetch OHLCV, validate schema, write deterministic outputs
+      - resample to required timeframes (optional / configurable)
+      - emit a manifest/provenance record (source + params + retrieval time)
+
+3) Gather and document market data sources
+   - Add a short “source matrix” doc (licensing, cost, rate limits, historical coverage).
+
+Notes:
+  - There is an unrelated “landing-page” WordPress plugin in the parent repo; it is not part of TradingLab.
+
+---
+
+Previous sections retained below for history.
+
+Road Map — 2026-02-06
+
+Goal (next session): (1) push `donchian_breakout` toward profitability, (2) build a better data downloader + document market data sources so backtests/validations are easy to run.
+
+Today’s progress (what changed since 2026-02-05):
+  - Phase 1 Monte Carlo policy refactor:
+     - Universal vs conditional MC tests; gating uses suitable universal only.
+     - Suitability bar-count bug fixed.
+     - Dual combined robustness outputs (universal gating + all-suitable info).
+  - Persistence + ops:
+     - Registry now stores structured outcomes (`outcome_json`) for pass/fail + reasons.
+     - Added `scripts/runs.py catalog` for quick latest pass/fail view.
+  - Reports + docs:
+     - Validation reports label universal/conditional and “used for gating”, show both combined blocks.
+     - User + dev docs updated across `docs/`.
+
+Top priorities for next session (ordered):
+
+1) Optimize `donchian_breakout` to profitability
+   - Review Phase 1 report failures focusing on:
+      - Universal MC gating (robustness) vs conditional randomized-entry diagnostics.
+      - Drawdown/edge stability; any overly brittle parameter sensitivity.
+   - Improve strategy mechanics (do one change at a time):
+      - Entry filter ideas: volatility regime, trend strength, breakout confirmation window, time-of-week filters.
+      - Exit/risk: ATR stop/target calibration, trailing logic, time-stop, re-entry cooldown.
+   - Add/extend unit tests:
+      - Signal timing and “no lookahead” edge cases.
+      - Ensure changes don’t break execution realism assumptions.
+   - Validation loop:
+      - Iterate with `--mc-iterations 100`.
+      - Confirm with `--mc-iterations 1000` only when it looks promising.
+
+2) Data downloader / dataset pipeline (make research easy)
+   - Define a single dataset request spec:
+      - symbol, venue, market type (spot/futures), timeframe, start/end, timezone
+      - storage paths: `data/raw/` + `data/processed/`
+   - Implement a downloader that can:
+      - fetch OHLCV, validate schema, write deterministic outputs
+      - resample to required timeframes (optional / configurable)
+      - emit a manifest/provenance record (source + params + retrieval time)
+
+3) Gather and document market data sources
+   - Crypto:
+      - Binance (spot/futures), Coinbase, Kraken (via APIs)
+      - CCXT as a common integration layer (where appropriate)
+   - FX:
+      - OANDA, Dukascopy, brokers/venues with exportable history
+   - Equities:
+      - Stooq (free), Polygon/Alpaca/IEX (paid/limited), Nasdaq Data Link
+   - Add a short “source matrix” doc (licensing, cost, rate limits, historical coverage).
+
+---
+
+Previous sections retained below for history.
+
+Road Map — 2026-02-03
+
+Goal: Continue validation and improvement of `donchian_breakout` strategy and CI integration.
+
+Top priorities for next session (ordered):
+
+1) Investigate and fix entry logic
+   - Inspect `strategies/donchian_breakout.py` for entry conditions, signal timing, and order placement.
+   - Add unit tests around signal generation and edge cases.
+
+2) Re-run Phase 1 (full) Monte Carlo
+   - Command (production run):
+     .venv/bin/python scripts/run_training_validation.py \
+       --strategy donchian_breakout \
+       --data data/raw/BTCUSDT-4h-2023.parquet \
+       --market BTCUSDT \
+       --start-date 2023-01-01 \
+       --end-date 2023-12-31 \
+       --mc-iterations 1000
+   - Note: `--mc-iterations 1000` may take significant time. Use 100 for quicker iterative testing.
+
+3) If Phase 1 passes → Run Phase 2 (OOS)
+   - Prepare an OOS data file (different time range or symbol slice).
+   - Run the OOS pipeline and generate OOS report.
+
+4) CI and automation
+   - Add a CI job to pre-resample required timeframes and run a smoke validation (reduced MC, e.g., 50).
+   - Ensure `--auto-resample` is available for non-interactive CI runs.
+
+5) Documentation and tests
+   - Add README notes describing required data files, expected commands, and recommended MC defaults.
+   - Add tests for deterministic Monte Carlo seed and randomized entry reproducibility.
+
+Quick checks & artifacts:
+  - Data: data/raw/BTCUSDT-4h-2023.parquet
+  - Last training report: reports/training_validation_donchian_breakout.html
+  - Files to inspect: strategies/donchian_breakout/*, validation/monte_carlo/*, scripts/run_training_validation.py
+
+Notes:
+  - The randomized entry MC showed random entries outperforming the current entry logic (Phase 1 failed).
+  - Fixing entry selection is the most important next step before investing longer MC runs.
+
+Additions — 2026-02-05
+
+Portfolio layer (next major feature)
+   - Build a portfolio engine that can run multi-strategy / multi-market allocations.
+   - Add correlation-aware risk caps (e.g., cluster/sector buckets or rolling corr) and exposure constraints:
+      - Max gross / net exposure
+      - Per-market / per-asset / per-direction caps
+      - Leverage caps and margin-aware sizing
+      - Concentration limits (e.g., max % NAV per strategy)
+   - Add portfolio-level performance attribution:
+      - By strategy, market, timeframe, direction
+      - Contribution to return, vol, drawdown
+      - Turnover + costs attribution
+
+Execution realism upgrades (incremental, but important)
+   - Partial fills + queueing assumptions (even if simplified)
+   - Fee schedules (tiered maker/taker, per-venue)
+   - Funding/borrow (where applicable: futures/perps funding, margin borrow)
+   - Spread models (fixed + volatility-aware, or empirical from candles)
+   - Latency models (decision-to-fill delay, order-to-book delay; approximate is fine)
+
+Strategy review (after portfolio layer lands)
+   - Re-review the dummy `ema_crossover` strategy under portfolio sizing + constraints.
+   - Re-review `donchian_breakout` under portfolio context (correlation caps, exposure limits, cost realism).
+
+Prepared by: Assistant
+Trading Lab — Production Roadmap (concise)
+
+1. CI & Automated Tests
+   - Add GitHub Actions CI: run lint, pytest, and lightweight smoke backtests.
+2. Deterministic Runs
+   - Ensure Monte Carlo and randomized-entry engines accept and use a seed for reproducible runs.
+3. Experiment Tracking
+   - Integrate MLFlow or simple experiments folder with metadata (params, seed, results, artifacts).
+4. Data & Schema Governance
+   - Implement data versioning (parquet + manifest), schema validation, and data quality checks.
+5. Validation Hardening
+   - Add unit tests for Monte Carlo runners and randomized-entry watchdog; codify metric whitelist.
+6. Reporting & Monitoring
+   - Add automated report generation on CI for smoke runs; expose JSON artifacts for dashboards.
+7. Live Execution Safety
+   - Add dry-run/simulated exchange adapter, circuit breakers, and live-health checks.
+8. Performance & Scaling
+   - Profile backtest engine, add parallelization for Monte Carlo (worker pool), and caching for indicators.
+9. Packaging & Releases
+   - Build versioned releases, publish changelogs, provide pip/venv install docs.
+10. Operational Docs & Runbooks
+   - Write runbooks: deploy, rollbacks, troubleshooting Monte Carlo failures, and data refresh procedures.
+
+11. Portfolio Layer
+   - Multi-strategy/multi-market allocation, correlation-aware risk caps, exposure constraints.
+   - Portfolio-level performance attribution and reporting.
+
+12. Execution Realism Upgrades
+   - Partial fills, fee schedules, funding/borrow, spread models, latency models.
+
+Short-term priorities (next sprint): 1, 2, 5, 6
+Medium-term (2-3 sprints): 3, 4, 7
+Long-term: 8, 9, 10, 11, 12
+
+If you want, I can scaffold CI, deterministic seeding, and the Monte Carlo unit tests next.

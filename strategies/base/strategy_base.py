@@ -301,20 +301,35 @@ class StrategyBase(ABC):
         except Exception:
             return None
 
-        # Try config value
-        percent = None
+        # Prefer MA-based stop if the strategy computed `sl_ma` and stop_loss config requests it.
         try:
             sl_cfg = getattr(self.config, 'stop_loss', None)
-            if sl_cfg is not None and hasattr(sl_cfg, 'percent'):
-                percent = getattr(sl_cfg, 'percent')
+            sl_type = getattr(sl_cfg, 'type', None) if sl_cfg is not None else None
+            if sl_type in {'SMA', 'EMA'}:
+                sl_ma = None
+                if hasattr(entry_row, 'get'):
+                    sl_ma = entry_row.get('sl_ma', None)
+                if sl_ma is not None and pd.notna(sl_ma):
+                    sl_level = float(sl_ma)
+
+                    buffer_pips = float(getattr(sl_cfg, 'buffer_pips', 0.0) or 0.0)
+                    buffer_unit = getattr(sl_cfg, 'buffer_unit', 'pip')
+                    pip_size = float(getattr(sl_cfg, 'pip_size', 0.0001) or 0.0001)
+
+                    if buffer_unit == 'pip':
+                        buffer_price = buffer_pips * pip_size
+                    else:
+                        buffer_price = buffer_pips
+
+                    if dir_int == 1:
+                        return sl_level - buffer_price
+                    return sl_level + buffer_price
         except Exception:
-            percent = None
+            # If MA stop cannot be computed, fall back to percent-based.
+            pass
 
-        # Fallback to instance attr
-        if percent is None:
-            percent = getattr(self, 'stoploss_pct', None)
-
-        # Default
+        # Percent-based fallback (legacy / convenience)
+        percent = getattr(self, 'stoploss_pct', None)
         if percent is None:
             pct = 0.01
         else:
@@ -323,13 +338,11 @@ class StrategyBase(ABC):
             except Exception:
                 pct = 0.01
 
-        # Interpret >1 as percent value (e.g., 1.0 -> 1%), convert to fraction
         if pct > 1:
             pct = pct / 100.0
 
         if dir_int == 1:
             return entry_price * (1.0 - pct)
-        else:
-            return entry_price * (1.0 + pct)
+        return entry_price * (1.0 + pct)
 
 

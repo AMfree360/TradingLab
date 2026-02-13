@@ -111,9 +111,14 @@ class FilterManager:
     def _config_to_dict(self, config_obj) -> Dict:
         """Convert Pydantic config object to dict."""
         if hasattr(config_obj, 'model_dump'):
-            return config_obj.model_dump()
+            # Only dump explicitly set fields so schema defaults don't
+            # accidentally override master filter defaults.
+            return config_obj.model_dump(exclude_unset=True)
         elif hasattr(config_obj, 'dict'):
-            return config_obj.dict()
+            try:
+                return config_obj.dict(exclude_unset=True)
+            except TypeError:
+                return config_obj.dict()
         elif isinstance(config_obj, dict):
             return config_obj
         else:

@@ -15,7 +15,7 @@ from engine.resampler import (
 
 def create_sample_1m_data(n_bars=100):
     """Create sample 1-minute OHLCV data."""
-    dates = pd.date_range(start='2024-01-01 00:00:00', periods=n_bars, freq='1T')
+    dates = pd.date_range(start='2024-01-01 00:00:00', periods=n_bars, freq='1min')
     np.random.seed(42)
     
     base_price = 100.0
@@ -129,8 +129,8 @@ def test_resample_multiple():
 def test_align_timeframes():
     """Test timeframe alignment."""
     # Create data for different timeframes
-    dates_1h = pd.date_range(start='2024-01-01 00:00:00', periods=4, freq='1H')
-    dates_15m = pd.date_range(start='2024-01-01 00:00:00', periods=16, freq='15T')
+    dates_1h = pd.date_range(start='2024-01-01 00:00:00', periods=4, freq='1h')
+    dates_15m = pd.date_range(start='2024-01-01 00:00:00', periods=16, freq='15min')
     
     df_1h = pd.DataFrame({
         'close': [100, 101, 102, 103],

@@ -47,6 +47,7 @@ class MarketSpec:
     contract_size: Optional[float] = None  # For forex/futures
     pip_value: Optional[float] = None  # For forex (e.g., 0.0001)
     tick_value: Optional[float] = None  # For futures
+    tick_size: Optional[float] = None  # Minimum price increment (for futures/stocks/crypto)
     min_trade_size: float = 0.01
     lot_step: float = 0.01  # Lot size increment
     price_precision: int = 5
@@ -419,6 +420,7 @@ class MarketSpec:
             contract_size=merged.get('contract_size'),
             pip_value=merged.get('pip_value'),
             tick_value=merged.get('tick_value'),
+            tick_size=merged.get('tick_size'),
             min_trade_size=merged.get('min_trade_size', 0.01),
             lot_step=merged.get('lot_step', 0.01),
             price_precision=merged.get('price_precision', 5),

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from strategies.donchian_breakout import DonchianBreakout
 
 
-def _build_price_df(n=50, start='2023-01-01', freq='4H'):
+def _build_price_df(n=50, start='2023-01-01', freq='4h'):
     idx = pd.date_range(start=start, periods=n, freq=freq)
     # build a gentle uptrend with noise
     price = np.linspace(100.0, 120.0, n) + np.random.normal(0, 0.5, n)
@@ -31,7 +31,7 @@ def test_donchian_import_and_signals():
     cfg.stop_loss = sl
 
     strat = DonchianBreakout(cfg)
-    df = _build_price_df(n=60, freq='4H')
+    df = _build_price_df(n=60, freq='4h')
     df_by_tf = {'4h': df}
 
     inds = strat.get_indicators(df.copy(), tf='4h')

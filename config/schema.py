@@ -351,7 +351,13 @@ class RiskConfig(BaseModel):
     - "account_size": Fixed risk based on initial capital (more realistic, recommended for testing)
     - "equity": Dynamic risk based on current equity (compounds gains, can lead to unrealistic results)
     """
-    sizing_mode: Literal["equity", "account_size"] = Field(default="account_size", description="Fixed (account_size) or dynamic (equity) position sizing")
+    sizing_mode: Literal["equity", "account_size", "daily_equity"] = Field(
+        default="account_size",
+        description=(
+            "Position sizing base: "
+            "'account_size' (fixed), 'equity' (compounds every trade), or 'daily_equity' (compounds once per day)."
+        ),
+    )
     risk_per_trade_pct: float = Field(default=1.0, gt=0.0, le=100.0, description="Risk percentage per trade (e.g., 1.0 = 1% of account)")
     account_size: float = Field(default=10000.0, gt=0.0, description="Initial account size for position sizing")
 
@@ -425,7 +431,17 @@ class ExecutionConfig(BaseModel):
 
 class TradeLimitConfig(BaseModel):
     """Trade/day and correlation limits."""
-    max_trades_per_day: int = Field(default=3, ge=1)
+    max_trades_per_day: int = Field(default=1, ge=1)
+    max_daily_loss_pct: Optional[float] = Field(
+        default=3.0,
+        gt=0.0,
+        le=100.0,
+        description=(
+            "Stop taking NEW entries for the remainder of the day once realized P&L after costs "
+            "is <= -X% of the day base (account_size for fixed sizing, otherwise day-start equity). "
+            "Set to None to disable."
+        ),
+    )
     enable_correlation: bool = True
 
 

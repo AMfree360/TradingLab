@@ -42,7 +42,7 @@ SAFETY GUARANTEES:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Literal, Any
 import numpy as np
@@ -1826,7 +1826,7 @@ class MonteCarloRandomizedEntry:
             sample_df = pd.DataFrame(sample_trade_pairs)
             log_dir = Path("data/logs")
             log_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             sample_log_path = log_dir / f"random_entry_samples_{timestamp}.csv"
             sample_df.to_csv(sample_log_path, index=False)
         
@@ -1848,7 +1848,7 @@ class MonteCarloRandomizedEntry:
             
             log_dir = Path("data/logs")
             log_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             aggregates_log_path = log_dir / f"random_entry_aggregates_{timestamp}.csv"
             aggregates_df.to_csv(aggregates_log_path, index=False)
             print(f"\n📊 Iteration aggregates saved to: {aggregates_log_path}")

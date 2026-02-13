@@ -46,6 +46,67 @@ You should see help text. If you get an error, check that Python is installed co
 
 ## Your First Backtest
 
+## Recommended for New Users: Guided Strategy Builder (GUI)
+
+If you're new to systematic trading (or you want to explore ideas quickly), the fastest way to start is the **GUI Launcher**.
+
+1. Start the GUI:
+   ```bash
+   python scripts/run_gui_launcher.py --reload
+   ```
+2. Open the Launcher in your browser (the terminal will show the URL).
+3. Click **Create Strategy (Guided)**.
+
+Builder v2 (**Context + Trigger**) is the guided strategy creation experience.
+
+The guided builder walks you through the core components of a backtestable strategy:
+- Market / symbol
+- Holding style + session controls
+- Entry conditions
+- Stops + risk sizing
+- Advanced (optional): trade management + calendar filters + execution options
+
+Power users can skip the wizard and edit specs directly in YAML (GUI: **Edit (advanced)**).
+
+After you review the YAML preview, you can run a build/backtest from the same UI.
+
+### Builder v2 visual previews (highly recommended)
+
+In Builder v2 Step 4, Trading Lab includes two chart previews to help you validate your logic before you click **Review**:
+
+- **Context visual (preview)**: entry-timeframe candles with the selected primary context overlaid (e.g., MA stack / Bollinger channel / ATR% line) and regime shading.
+- **Setup visual (preview)**: entry-timeframe candles with context shading and markers where **ALL** of your **Context + Signals + Triggers** align.
+
+Notes:
+
+- These previews use the newest dataset from your GUI runs under `data/logs/gui_runs/**/dataset_*`.
+   - If the charts say “No dataset found…”, run any backtest from the GUI (or upload a dataset) once, then return to the builder.
+- If **Context TF** differs from **Entry TF**, context is evaluated on the context timeframe and forward-filled to the entry timeframe for plotting and evaluation alignment (so shading can look “stepped”).
+- The setup chart may include optional marker layers (signals-only / triggers-only) that are hidden by default; use the Plotly legend to toggle them on.
+
+### Builder v2 Step 5: Execution option — exit if context invalidates
+
+In Step 5 (Advanced), you can optionally enable **Exit if context invalidates**.
+
+This is useful for regime-based strategies where your **context filter** defines when trading is allowed (e.g., trend is bullish). If the context flips from valid → invalid while you’re in a trade, the strategy can react automatically:
+
+- **Immediate exit**: emits an exit intent when context flips false, closing the position.
+- **Tighten stop**: emits a “tighten stop” intent (no instant close). The position remains open, but the stop can be tightened to reduce risk.
+
+Notes:
+
+- This only matters if you’re using a context filter (Step 4) and/or a higher **Context TF**. If you have no context, there’s nothing to invalidate.
+- Default is **disabled** (recommended until you understand the trade-offs).
+
+If you’re editing specs directly, the YAML looks like:
+
+```yaml
+execution:
+   exit_if_context_invalid:
+      enabled: true
+      mode: immediate   # or: tighten_stop
+```
+
 Let's run a simple backtest to make sure everything works:
 
 ```bash
@@ -89,7 +150,7 @@ Trading Lab/
 
 Now that you're set up, here's what to do next:
 
-1. **Learn about strategies**: Read [Strategy Development Guide](STRATEGY_DEVELOPMENT.md)
+1. **Learn about strategies**: Read [Strategy Development Guide](13-strategy-development.md)
 2. **Get data**: Read [Data Management Guide](DATA_MANAGEMENT.md)
 3. **Run backtests**: Read [Backtesting Guide](BACKTESTING.md)
 4. **Validate strategies**: Read [Validation Guide](VALIDATION.md)

@@ -119,7 +119,10 @@ for param in param_grid.keys():
 ```bash
 # Update config.yml with optimized parameters
 # Then run validation
-python scripts/run_validation.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv
+python scripts/run_training_validation.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv --override-split-policy
+
+# Then validate out-of-sample (walk-forward)
+python scripts/run_oos_validation.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv --override-split-policy
 ```
 
 ## Optimization Strategies

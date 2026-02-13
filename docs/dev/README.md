@@ -9,6 +9,7 @@ Welcome to the developer documentation for Trading Lab! This documentation is de
 - **[Filter Abstraction Architecture](02-filter-abstraction.md)** - Strategy filter system design and implementation
 - **[Validation Architecture](03-validation-architecture.md)** - Validation system design and philosophy
 - **[Engine Layer Details](04-engine-layer.md)** - Backtest engine implementation details
+- **[GUI Launcher Spec (Thin Wrapper)](gui-launcher-spec.md)** - Big-button UI that runs the same CLI commands (no second product)
 
 ### 🔧 Development Guides
 - **[Strategy Development Guide](05-strategy-development.md)** - How to create and extend strategies (technical deep-dive)

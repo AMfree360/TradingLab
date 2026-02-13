@@ -23,7 +23,37 @@ python scripts/run_backtest.py \
   --market <market_symbol>
 ```
 
+**Notes**:
+- `--data` can be a single file, a directory, or a glob (e.g., `data/raw/BTCUSDT-15m-*.parquet`).
+- If `--data` resolves to multiple files, either consolidate first or pass `--auto-consolidate`.
+
+**Useful flags**:
+- `--auto-consolidate`: Consolidate multiple input files into a single parquet automatically
+- `--consolidated-output`: Optional explicit output path for the consolidated parquet
+- `--report-visuals`: Include optional charts (equity + drawdown) in the HTML report
+
 **Output**: HTML report in `reports/` directory.
+
+---
+
+### Research Layer
+
+#### `build_strategy_from_spec.py`
+**Purpose**: Compile a human-readable research spec (YAML) into a standard TradingLab strategy folder under `strategies/<name>/`.
+
+**Usage**:
+```bash
+python scripts/build_strategy_from_spec.py \
+  --spec research_specs/example_ema_cross.yml \
+  --print-summary
+```
+
+**Output**:
+- `strategies/<name>/config.yml`
+- `strategies/<name>/strategy.py`
+
+**Notes**:
+- Generated strategies are normal TradingLab strategies; backtest/validation workflows are unchanged.
 
 ---
 
@@ -146,14 +176,25 @@ python scripts/run_stationarity.py \
 python scripts/run_validation.py \
   --strategy <strategy_name> \
   --data <data_file> \
-  --training-start <YYYY-MM-DD> \
-  --training-end <YYYY-MM-DD> \
-  --oos-start <YYYY-MM-DD> \
-  --oos-end <YYYY-MM-DD> \
-  --market <market_symbol>
+  --phase <backtest|phase1|phase2|final_oos> \
+  --start-date <YYYY-MM-DD> \
+  --end-date <YYYY-MM-DD> \
+  --market <market_symbol> \
+  --config-profile <profile_name>
 ```
 
+**Split policy (recommended)**:
+- By default, TradingLab enforces a standard split policy from `config/data_splits.yml`.
+- If a split policy is present and you are not overriding it, you must provide `--phase` so the script can select the correct policy range.
+- To run ad-hoc dates/data (not recommended), use `--override-split-policy`.
+
 **What it does**: Runs both Phase 1 and Phase 2 validation sequentially.
+
+**Notes**:
+- For the most reproducible workflow, prefer the phase-specific scripts:
+  - `scripts/run_training_validation.py` (Phase 1)
+  - `scripts/run_oos_validation.py` (Phase 2)
+  - `scripts/run_final_oos_test.py` (holdout)
 
 ---
 
@@ -233,6 +274,10 @@ python scripts/consolidate_data.py \
   --input data/raw/EURUSD_2020.csv data/raw/EURUSD_2021.csv data/raw/EURUSD_2022.csv \
   --output data/raw/EURUSD_2020-2022.csv
 ```
+
+**Additional options**:
+- `--dedupe-keep {first,last}`: When removing duplicate timestamps, keep first or last (default: first)
+- `--allow-mixed-frequency`: Allow inputs with different inferred bar intervals (default: off; recommended to resample first)
 
 ---
 

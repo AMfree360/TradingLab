@@ -145,8 +145,195 @@ def download_binance_data(
     return output_path
 
 
+def download_market_data(
+    *,
+    provider: str,
+    symbol: str,
+    interval: str,
+    start_date: str,
+    end_date: str,
+    output_path: Path,
+    market_type: str = 'spot',
+    yf_auto_adjust: bool = False,
+    csv_url: str | None = None,
+    csv_datetime_col: str = 'timestamp',
+    csv_open_col: str = 'open',
+    csv_high_col: str = 'high',
+    csv_low_col: str = 'low',
+    csv_close_col: str = 'close',
+    csv_volume_col: str = 'volume',
+    csv_date_format: str | None = None,
+    csv_unit: str | None = None,
+    csv_tz: str | None = None,
+) -> tuple[Path, pd.DataFrame | None]:
+    """Download OHLCV from the selected provider and save to output_path.
+
+    Returns:
+        (path, df_or_none)
+        df_or_none is provided for providers that return data in-memory;
+        for binance_api, data is saved directly and df is loaded only when needed by caller.
+    """
+    provider = provider.lower().strip()
+    if provider == 'binance_api':
+        return (
+            download_binance_data(
+                symbol=symbol,
+                interval=interval,
+                start_date=start_date,
+                end_date=end_date,
+                output_path=output_path,
+            ),
+            None,
+        )
+
+    if provider == 'binance_vision':
+        from adapters.data.binance_vision import download_klines_range, save_ohlcv
+
+        df = download_klines_range(
+            symbol=symbol,
+            interval=interval,
+            start_date=start_date,
+            end_date=end_date,
+            market=market_type,
+        )
+        save_ohlcv(df, output_path)
+        return output_path, df
+
+    if provider == 'yfinance':
+        from adapters.data.providers.base import DownloadRequest
+        from adapters.data.providers.yfinance_provider import YFinanceProvider
+        from adapters.data.binance_vision import save_ohlcv
+
+        req = DownloadRequest(symbol=symbol, interval=interval, start_date=start_date, end_date=end_date)
+        df = YFinanceProvider().download(req, auto_adjust=yf_auto_adjust)
+        save_ohlcv(df, output_path)
+        return output_path, df
+
+    if provider == 'stooq':
+        from adapters.data.providers.base import DownloadRequest
+        from adapters.data.providers.stooq import StooqProvider
+        from adapters.data.binance_vision import save_ohlcv
+
+        req = DownloadRequest(symbol=symbol, interval=interval, start_date=start_date, end_date=end_date)
+        df = StooqProvider().download(req)
+        save_ohlcv(df, output_path)
+        return output_path, df
+
+    if provider == 'csv_url':
+        from adapters.data.providers.base import DownloadRequest
+        from adapters.data.providers.csv_url import CsvUrlProvider
+        from adapters.data.binance_vision import save_ohlcv
+
+        req = DownloadRequest(symbol=symbol, interval=interval, start_date=start_date, end_date=end_date)
+        df = CsvUrlProvider().download(
+            req,
+            url=csv_url,
+            datetime_col=csv_datetime_col,
+            open_col=csv_open_col,
+            high_col=csv_high_col,
+            low_col=csv_low_col,
+            close_col=csv_close_col,
+            volume_col=csv_volume_col,
+            date_format=csv_date_format,
+            unit=csv_unit,
+            tz=csv_tz,
+        )
+        save_ohlcv(df, output_path)
+        return output_path, df
+
+    raise ValueError(
+        f"Unsupported provider: {provider}. Supported: binance_api, binance_vision, yfinance, stooq, csv_url"
+    )
+
+
+def _standardize_output_path(
+    *,
+    symbol: str,
+    interval: str,
+    start_date: str,
+    end_date: str,
+    fmt: str,
+    output: str | None,
+    folder: str = 'data/raw',
+) -> Path:
+    if output:
+        return Path(output)
+    ext = '.parquet' if fmt == 'parquet' else '.csv'
+    data_dir = Path(__file__).parent.parent / folder
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / f"{symbol}-{interval}-{start_date}_to_{end_date}{ext}"
+
+
+def _maybe_resample_to_processed(
+    *,
+    df: pd.DataFrame,
+    target_tf: str | None,
+    processed_output: str | None,
+    base_tf: str | None,
+) -> Path | None:
+    if not target_tf:
+        return None
+
+    from engine.resampler import resample_ohlcv
+
+    out_df = resample_ohlcv(
+        df,
+        target_tf=target_tf,
+        base_tf=base_tf,
+        label='left',
+        closed='left',
+    )
+    if processed_output:
+        out_path = Path(processed_output)
+    else:
+        out_path = Path(__file__).parent.parent / 'data' / 'processed' / f"AUTO-{target_tf}.parquet"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_parquet(out_path)
+    print(f"Saved resampled data to: {out_path} ({len(out_df)} bars)")
+    return out_path
+
+
 def main():
     parser = argparse.ArgumentParser(description='Download historical data for backtesting')
+    parser.add_argument(
+        '--provider',
+        type=str,
+        choices=['binance_api', 'binance_vision', 'yfinance', 'stooq', 'csv_url'],
+        help='Data provider (preferred). If omitted, --source/--market-type provide Binance compatibility.'
+    )
+    parser.add_argument(
+        '--source',
+        type=str,
+        choices=['api', 'vision'],
+        default='api',
+        help='Download source: api (Binance REST) or vision (Binance Data Vision bulk files). (default: api)'
+    )
+    parser.add_argument(
+        '--market-type',
+        type=str,
+        choices=['spot', 'futures_um'],
+        default='spot',
+        help='Market type for vision downloads (default: spot)'
+    )
+    parser.add_argument(
+        '--yf-auto-adjust',
+        action='store_true',
+        help='Yahoo Finance: return auto-adjusted OHLC (splits/dividends)'
+    )
+    parser.add_argument(
+        '--csv-url',
+        type=str,
+        help='CSV URL for provider=csv_url'
+    )
+    parser.add_argument('--csv-datetime-col', type=str, default='timestamp', help='CSV datetime column (default: timestamp)')
+    parser.add_argument('--csv-open-col', type=str, default='open', help='CSV open column (default: open)')
+    parser.add_argument('--csv-high-col', type=str, default='high', help='CSV high column (default: high)')
+    parser.add_argument('--csv-low-col', type=str, default='low', help='CSV low column (default: low)')
+    parser.add_argument('--csv-close-col', type=str, default='close', help='CSV close column (default: close)')
+    parser.add_argument('--csv-volume-col', type=str, default='volume', help='CSV volume column (default: volume)')
+    parser.add_argument('--csv-date-format', type=str, help='Optional: strftime date format for CSV datetime parsing')
+    parser.add_argument('--csv-unit', type=str, choices=['s', 'ms'], help='Optional: epoch unit for CSV datetime parsing')
+    parser.add_argument('--csv-tz', type=str, help='Optional: timezone name to localize CSV datetimes (e.g., UTC)')
     parser.add_argument(
         '--symbol',
         type=str,
@@ -174,7 +361,7 @@ def main():
     parser.add_argument(
         '--output',
         type=str,
-        help='Output file path (default: data/raw/{SYMBOL}-{INTERVAL}-{START}.parquet)'
+        help='Output file path (default: data/raw/{SYMBOL}-{INTERVAL}-{START}_to_{END}.parquet)'
     )
     parser.add_argument(
         '--format',
@@ -183,28 +370,67 @@ def main():
         default='parquet',
         help='Output format (default: parquet)'
     )
+
+    parser.add_argument(
+        '--resample-to',
+        type=str,
+        help='Optional: resample downloaded data to timeframe (e.g., 4h) and write to data/processed'
+    )
+    parser.add_argument(
+        '--processed-output',
+        type=str,
+        help='Optional: output path for resampled data (default: data/processed/AUTO-{TF}.parquet)'
+    )
     
     args = parser.parse_args()
+
+    provider = args.provider
+    if not provider:
+        # Back-compat: --source api|vision
+        provider = 'binance_api' if args.source == 'api' else 'binance_vision'
+
+    output_path = _standardize_output_path(
+        symbol=args.symbol,
+        interval=args.interval,
+        start_date=args.start,
+        end_date=args.end,
+        fmt=args.format,
+        output=args.output,
+        folder='data/raw',
+    )
     
-    # Generate output path if not provided
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        data_dir = Path(__file__).parent.parent / 'data' / 'raw'
-        data_dir.mkdir(parents=True, exist_ok=True)
-        ext = '.parquet' if args.format == 'parquet' else '.csv'
-        filename = f"{args.symbol}-{args.interval}-{args.start}{ext}"
-        output_path = data_dir / filename
-    
-    # Download data
     try:
-        download_binance_data(
+        df_path, df = download_market_data(
+            provider=provider,
             symbol=args.symbol,
             interval=args.interval,
             start_date=args.start,
             end_date=args.end,
-            output_path=output_path
+            output_path=output_path,
+            market_type=args.market_type,
+            yf_auto_adjust=bool(args.yf_auto_adjust),
+            csv_url=args.csv_url,
+            csv_datetime_col=args.csv_datetime_col,
+            csv_open_col=args.csv_open_col,
+            csv_high_col=args.csv_high_col,
+            csv_low_col=args.csv_low_col,
+            csv_close_col=args.csv_close_col,
+            csv_volume_col=args.csv_volume_col,
+            csv_date_format=args.csv_date_format,
+            csv_unit=args.csv_unit,
+            csv_tz=args.csv_tz,
         )
+        if df is None:
+            df = pd.read_parquet(df_path) if df_path.suffix == '.parquet' else pd.read_csv(df_path, index_col=0, parse_dates=True)
+        print(f"Saved to: {df_path}")
+
+        _maybe_resample_to_processed(
+            df=df,
+            target_tf=args.resample_to,
+            processed_output=args.processed_output,
+            base_tf=args.interval,
+        )
+
         print(f"\n✓ Data downloaded successfully!")
         print(f"\nYou can now run backtest with:")
         print(f"  python3 scripts/run_backtest.py --strategy ma_alignment --data {output_path}")

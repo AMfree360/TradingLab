@@ -12,6 +12,10 @@ The Trading Lab workflow consists of three main phases:
 
 Each phase has specific steps and criteria that must be met before proceeding.
 
+**Recommended standard workflow**:
+- Use the standardized split policy (`config/data_splits.yml`) and config profiles so Phase 1, Phase 2, and the final holdout are reproducible and comparable.
+- See: [Golden Path: Split Policy + Config Profiles](11-split-policy-and-profiles.md)
+
 ---
 
 ## Phase 1: Development
@@ -22,7 +26,7 @@ Each phase has specific steps and criteria that must be met before proceeding.
 
 **Actions**:
 1. Identify your target market (e.g., BTCUSDT, EURUSD, AAPL)
-2. Download historical data (see [Data Management Guide](DATA_MANAGEMENT.md))
+2. Download historical data (see [Data Management Guide](03-data-management.md))
 
 **Example - Downloading Data**:
 ```bash
@@ -42,6 +46,46 @@ python scripts/consolidate_data.py \
   --input "data/raw/EURUSD_*.csv" \
   --output data/raw/EURUSD_M15_2020_2025.csv
 ```
+
+#### Common data pitfalls (manual/chunked downloads)
+
+If you manually download market data in chunks (daily/monthly/yearly files), backtests over many years can break or become misleading unless you standardize the dataset.
+
+**1) Multiple files** (yearly/monthly chunks)
+
+- Backtests normally expect a single file.
+- You can consolidate first (recommended for reproducibility):
+
+```bash
+python3 scripts/consolidate_data.py --input "data/raw/BTCUSDT-15m-*.parquet" --output data/processed/BTCUSDT-15m.parquet
+python3 scripts/run_backtest.py --strategy my_strategy --data data/processed/BTCUSDT-15m.parquet
+```
+
+- Or let the runner consolidate automatically:
+
+```bash
+python3 scripts/run_backtest.py --strategy my_strategy --data "data/raw/BTCUSDT-15m-*.parquet" --auto-consolidate
+```
+
+**2) Mixed-frequency files** (hourly + daily + monthly)
+
+- Don’t merge different bar intervals directly.
+- Resample to a single target timeframe first, then consolidate.
+
+```bash
+python3 scripts/resample_ohlcv.py --src data/raw/BTCUSDT-1h-2021.parquet --dst data/raw/BTCUSDT-4h-2021.parquet --rule 4h
+python3 scripts/consolidate_data.py --input "data/raw/BTCUSDT-4h-*.parquet" --output data/processed/BTCUSDT-4h.parquet
+```
+
+**3) Missing candles (gaps)**
+
+If your dataset has gaps and you want a perfect grid for research/validation:
+
+```bash
+python3 scripts/fill_timegrid.py --input data/processed/BTCUSDT-4h.parquet --output data/processed/BTCUSDT-4h-filled.parquet --freq 4h
+```
+
+See also: [Data Management Guide](03-data-management.md)
 
 **Checkpoint**: ✅ You have data file(s) in `data/raw/` directory
 
@@ -65,7 +109,7 @@ strategies/
     README.md       # Optional documentation
 ```
 
-**Detailed Guide**: See [Strategy Development Guide](STRATEGY_DEVELOPMENT.md)
+**Detailed Guide**: See [Strategy Development Guide](13-strategy-development.md)
 
 **Checkpoint**: ✅ Strategy code compiles without errors
 
@@ -719,7 +763,7 @@ python scripts/run_stationarity.py \
 ## Next Steps
 
 - **New to Trading Lab?**: Start with [Getting Started Guide](GETTING_STARTED.md)
-- **Creating Strategies?**: See [Strategy Development Guide](STRATEGY_DEVELOPMENT.md)
+- **Creating Strategies?**: See [Strategy Development Guide](13-strategy-development.md)
 - **Understanding Results?**: See [Reports Guide](REPORTS.md)
 - **Need Help?**: Review relevant guides in `/docs`
 

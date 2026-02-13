@@ -73,7 +73,7 @@ master_filters:
   
   # News filter - blocks trading around economic events
   news_filter:
-    enabled: true
+    enabled: false
     default_buffer_minutes: 15  # Default buffer before/after news events
     slots:
       slot_1:
@@ -121,7 +121,7 @@ master_filters:
   regime_filters:
     # ADX filter - trend strength
     adx:
-      enabled: true
+      enabled: false
       period: 14
       min_forex: 23.0
       min_indices: 20.0

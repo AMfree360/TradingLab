@@ -88,6 +88,12 @@ Examples:
         action='store_true',
         help='Skip confirmation prompt (required for --phase all)'
     )
+
+    parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='Skip confirmation prompt (alias for non-interactive use).'
+    )
     
     args = parser.parse_args()
     
@@ -121,7 +127,9 @@ Examples:
         print("⚠️  Will reset Phase 1 state but KEEP failure count")
     print()
     
-    if not args.confirm:
+    auto_confirm = bool(args.confirm or args.yes)
+
+    if not auto_confirm:
         response = input("Are you sure you want to reset? (yes/no): ")
         if response.lower() not in ['yes', 'y']:
             print("Reset cancelled.")

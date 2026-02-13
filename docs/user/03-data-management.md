@@ -279,6 +279,36 @@ python3 scripts/consolidate_data.py \
 - `--output`: Output consolidated file path
 - `--no-sort`: Don't sort by timestamp (default: sorted)
 - `--keep-duplicates`: Keep duplicate timestamps (default: removed)
+- `--dedupe-keep {first,last}`: When removing duplicates, which record to keep (default: first)
+- `--allow-mixed-frequency`: Allow consolidating files that appear to have different bar intervals (default: off)
+
+#### Important: Mixed-frequency downloads (daily + hourly + monthly)
+
+If you manually download data in mixed “chunks” (e.g., some files are daily bars, others are hourly), **do not merge them directly**.
+
+- Trading Lab expects a single consistent bar interval per dataset.
+- Mixing intervals can silently create incorrect backtests (duplicated timestamps, inconsistent spacing, distorted indicators).
+
+**Recommended fix**:
+
+1) Pick the timeframe you want to trade/test (e.g., `4h`).
+2) Resample each source file to that timeframe.
+3) Consolidate the resampled files.
+
+Example:
+
+```bash
+# Resample each chunk to the same timeframe
+python3 scripts/resample_ohlcv.py --src data/raw/BTCUSDT-1h-2021.parquet --dst data/raw/BTCUSDT-4h-2021.parquet --rule 4h
+python3 scripts/resample_ohlcv.py --src data/raw/BTCUSDT-1h-2022.parquet --dst data/raw/BTCUSDT-4h-2022.parquet --rule 4h
+
+# Then consolidate
+python3 scripts/consolidate_data.py \
+    --input "data/raw/BTCUSDT-4h-*.parquet" \
+    --output data/processed/BTCUSDT-4h-2021-2022.parquet
+```
+
+If you truly intend to merge mixed intervals (rare), you can pass `--allow-mixed-frequency`, but you should treat the output as “research only” unless you fully understand the consequences.
 
 **Example workflow**:
 
@@ -370,6 +400,25 @@ Trading Lab automatically loads data when you run backtests:
 ```bash
 python scripts/run_backtest.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv
 ```
+
+### Using chunked downloads in backtests
+
+Backtests normally expect a **single** data file. If your `--data` resolves to multiple files (a directory or a glob), you have two options:
+
+1) **Explicitly consolidate first** (recommended for reproducibility):
+
+```bash
+python3 scripts/consolidate_data.py --input "data/raw/BTCUSDT-15m-*.parquet" --output data/processed/BTCUSDT-15m.parquet
+python3 scripts/run_backtest.py --strategy my_strategy --data data/processed/BTCUSDT-15m.parquet
+```
+
+2) **Let the backtest runner consolidate for you**:
+
+```bash
+python3 scripts/run_backtest.py --strategy my_strategy --data "data/raw/BTCUSDT-15m-*.parquet" --auto-consolidate
+```
+
+Tip: the runner caches the consolidated parquet under `data/processed/consolidated/` so you don’t pay the consolidation cost every run.
 
 ### Data Requirements by Strategy
 

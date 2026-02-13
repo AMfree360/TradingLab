@@ -45,7 +45,7 @@ def test_phase2_marks_consumed_before_validation_runs(tmp_path, monkeypatch):
             'close': [1, 1, 1, 1],
             'volume': [1, 1, 1, 1],
         },
-        index=pd.date_range('2020-01-01', periods=4, freq='1H'),
+        index=pd.date_range('2020-01-01', periods=4, freq='1h'),
     )
     df.to_csv(data_file)
 

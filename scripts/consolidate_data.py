@@ -4,6 +4,7 @@
 import argparse
 import sys
 from pathlib import Path
+import re
 import pandas as pd
 
 # Add parent directory to path
@@ -16,7 +17,9 @@ def consolidate_files(
     input_files: list[Path],
     output_path: Path,
     sort: bool = True,
-    remove_duplicates: bool = True
+    remove_duplicates: bool = True,
+    dedupe_keep: str = 'first',
+    allow_mixed_frequency: bool = False,
 ) -> Path:
     """
     Consolidate multiple OHLCV files into one.
@@ -26,48 +29,114 @@ def consolidate_files(
         output_path: Where to save consolidated data
         sort: Sort by timestamp after consolidation
         remove_duplicates: Remove duplicate timestamps
+        dedupe_keep: When removing duplicates, which record to keep ('first' or 'last')
+        allow_mixed_frequency: If False, error when input files appear to have different bar intervals
     
     Returns:
         Path to consolidated file
     """
     loader = DataLoader()
     all_data = []
+
+    def _infer_minutes_from_index(idx) -> int | None:
+        if not isinstance(idx, pd.DatetimeIndex) or len(idx) < 3:
+            return None
+        try:
+            freq = pd.infer_freq(idx)
+            if freq:
+                f = str(freq)
+                if f.endswith('T') or f.endswith('min'):
+                    digits = re.sub(r'\D+', '', f)
+                    return int(digits) if digits else None
+                if f.lower().endswith('h'):
+                    digits = re.sub(r'\D+', '', f)
+                    return (int(digits) if digits else 1) * 60
+                if f.lower().endswith('d'):
+                    digits = re.sub(r'\D+', '', f)
+                    return (int(digits) if digits else 1) * 1440
+        except Exception:
+            pass
+        try:
+            diffs = idx.to_series().diff().dropna().dt.total_seconds() / 60.0
+            if diffs.empty:
+                return None
+            return int(diffs.median())
+        except Exception:
+            return None
+
+    def _mins_to_tf(m: int | None) -> str:
+        if m is None:
+            return 'unknown'
+        if m % 1440 == 0:
+            days = m // 1440
+            return f"{days}d" if days > 1 else '1d'
+        if m % 60 == 0:
+            hours = m // 60
+            return f"{hours}h" if hours > 1 else '1h'
+        return f"{int(m)}m"
     
     print(f"Consolidating {len(input_files)} files...")
+
+    inferred_minutes: list[int | None] = []
     
     for i, file_path in enumerate(input_files, 1):
         if not file_path.exists():
             print(f"Warning: File not found: {file_path}, skipping...")
             continue
+
+        if file_path.is_dir():
+            print(f"Warning: Input is a directory (not a file): {file_path}, skipping...")
+            continue
         
         print(f"  [{i}/{len(input_files)}] Loading {file_path.name}...")
         df = loader.load(file_path)
+
+        if df.empty:
+            print(f"    Loaded 0 bars (empty), skipping...")
+            continue
+
+        mins = _infer_minutes_from_index(df.index)
+        inferred_minutes.append(mins)
         all_data.append(df)
-        print(f"    Loaded {len(df)} bars ({df.index[0]} to {df.index[-1]})")
+        print(
+            f"    Loaded {len(df)} bars ({df.index[0]} to {df.index[-1]})"
+            f" | interval≈{_mins_to_tf(mins)}"
+        )
     
     if not all_data:
         raise ValueError("No valid data files found!")
+
+    unique_mins = {m for m in inferred_minutes if m is not None}
+    if (not allow_mixed_frequency) and len(unique_mins) > 1:
+        details = ', '.join(sorted({_mins_to_tf(m) for m in unique_mins}))
+        raise ValueError(
+            "Input files appear to have mixed bar intervals "
+            f"({details}). Resample to a single timeframe before consolidating, "
+            "or pass --allow-mixed-frequency if you really intend to merge them."
+        )
     
     # Concatenate all dataframes
     print("\nCombining data...")
     consolidated = pd.concat(all_data, axis=0)
+
+    # Sort by timestamp early (helps downstream checks and makes output stable)
+    if sort:
+        consolidated = consolidated.sort_index()
     
     # Remove duplicates if requested
     if remove_duplicates:
+        if dedupe_keep not in {'first', 'last'}:
+            raise ValueError("dedupe_keep must be 'first' or 'last'")
         initial_len = len(consolidated)
-        consolidated = consolidated[~consolidated.index.duplicated(keep='first')]
+        consolidated = consolidated[~consolidated.index.duplicated(keep=dedupe_keep)]
         removed = initial_len - len(consolidated)
         if removed > 0:
-            print(f"  Removed {removed} duplicate timestamps")
-    
-    # Sort by timestamp
-    if sort:
-        consolidated = consolidated.sort_index()
+            print(f"  Removed {removed} duplicate timestamps (kept={dedupe_keep})")
     
     # Save consolidated file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    if output_path.suffix == '.parquet':
+    if output_path.suffix.lower() == '.parquet':
         consolidated.to_parquet(output_path)
     else:
         consolidated.to_csv(output_path)
@@ -106,6 +175,18 @@ def main():
         action='store_true',
         help='Keep duplicate timestamps (default: remove)'
     )
+    parser.add_argument(
+        '--dedupe-keep',
+        type=str,
+        choices=['first', 'last'],
+        default='first',
+        help="When removing duplicates, keep 'first' or 'last' (default: first)"
+    )
+    parser.add_argument(
+        '--allow-mixed-frequency',
+        action='store_true',
+        help='Allow consolidating inputs with different bar intervals (default: off)'
+    )
     
     args = parser.parse_args()
     
@@ -130,7 +211,9 @@ def main():
             input_files=input_files,
             output_path=output_path,
             sort=not args.no_sort,
-            remove_duplicates=not args.keep_duplicates
+            remove_duplicates=not args.keep_duplicates,
+            dedupe_keep=args.dedupe_keep,
+            allow_mixed_frequency=bool(args.allow_mixed_frequency),
         )
         print("\n✓ Consolidation complete!")
     except Exception as e:

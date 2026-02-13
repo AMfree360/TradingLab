@@ -18,6 +18,12 @@ from config.market_loader import apply_market_profile
 from reports.report_generator import ReportGenerator
 from experiments.registry import ExperimentRegistry, RunRecord
 from repro.dataset_manifest import sha256_text, canonical_json_dumps
+from config.data_splits import (
+    maybe_load_policy,
+    enforce_or_fill_dates,
+    enforce_or_fill_data_file,
+    SplitPolicyError,
+)
 
 
 def main():
@@ -53,8 +59,7 @@ Examples:
     parser.add_argument(
         '--data',
         type=str,
-        required=True,
-        help='Path to data file (CSV or Parquet)'
+        help='Path to data file (CSV or Parquet). If omitted, uses split policy dataset file.'
     )
     parser.add_argument(
         '--market',
@@ -65,6 +70,11 @@ Examples:
         '--config',
         type=str,
         help='Path to strategy config file (default: strategies/{strategy}/config.yml)'
+    )
+    parser.add_argument(
+        '--config-profile',
+        type=str,
+        help='Optional strategy config profile name (loads strategies/{strategy}/configs/profiles/{name}.yml)'
     )
     parser.add_argument(
         '--criteria',
@@ -80,41 +90,131 @@ Examples:
     parser.add_argument(
         '--start-date',
         type=str,
-        required=True,
-        help='Start date for OOS data (YYYY-MM-DD)'
+        help='Start date for OOS data (YYYY-MM-DD). If omitted, uses split policy Phase 2 range.'
     )
     parser.add_argument(
         '--end-date',
         type=str,
-        required=True,
-        help='End date for OOS data (YYYY-MM-DD)'
+        help='End date for OOS data (YYYY-MM-DD). If omitted, uses split policy Phase 2 range.'
     )
     parser.add_argument(
         '--wf-training-period',
         type=str,
-        default='1 year',
+        default=None,
         help='Walk-forward training period (default: 1 year)'
     )
     parser.add_argument(
         '--wf-test-period',
         type=str,
-        default='6 months',
+        default=None,
         help='Walk-forward test period (default: 6 months)'
     )
     parser.add_argument(
         '--wf-window-type',
         type=str,
         choices=['expanding', 'rolling'],
-        default='expanding',
+        default=None,
         help='Walk-forward window type (default: expanding)'
+    )
+
+    parser.add_argument(
+        '--split-policy',
+        type=str,
+        default='config/data_splits.yml',
+        help='Path to split policy YAML (default: config/data_splits.yml)'
+    )
+    parser.add_argument(
+        '--split-policy-name',
+        type=str,
+        default='default_btcusdt_4h',
+        help='Policy name inside split policy YAML (default: default_btcusdt_4h)'
+    )
+    parser.add_argument(
+        '--override-split-policy',
+        action='store_true',
+        help='Allow running with --data/--start-date/--end-date that do not match split policy (not recommended)'
     )
     parser.add_argument(
         '--output',
         type=str,
         help='Output report name (default: auto-generated)'
     )
+
+    parser.add_argument(
+        '--report-visuals',
+        action='store_true',
+        help='Include optional charts/visualizations in the HTML report (default: off for compact reports)'
+    )
+    parser.add_argument(
+        '--report-explanations',
+        action='store_true',
+        help='Include additional explanatory sections in the HTML report (default: off)'
+    )
     
     args = parser.parse_args()
+
+    # Apply split policy defaults/enforcement (Phase 2)
+    try:
+        policy = maybe_load_policy(policy_path=args.split_policy, policy_name=args.split_policy_name)
+    except Exception as e:
+        print(f"⚠️  Warning: Could not load split policy: {e}")
+        policy = None
+
+    if policy is not None:
+        try:
+            data_path_from_policy = enforce_or_fill_data_file(
+                phase_range=policy.phase2,
+                data_arg=args.data,
+                override=args.override_split_policy,
+                label='Phase 2',
+            )
+            args.data = str(data_path_from_policy)
+
+            start_ts, end_ts = enforce_or_fill_dates(
+                phase_range=policy.phase2,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                override=args.override_split_policy,
+                label='Phase 2',
+            )
+            args.start_date = start_ts.strftime('%Y-%m-%d')
+            args.end_date = end_ts.strftime('%Y-%m-%d')
+
+            # Walk-forward config defaults/enforcement
+            if not args.override_split_policy:
+                args.wf_training_period = policy.phase2_cfg.wf_training_period
+                args.wf_test_period = policy.phase2_cfg.wf_test_period
+                args.wf_window_type = policy.phase2_cfg.wf_window_type
+                print(
+                    f"✓ Split policy enforced ({policy.name}) for Phase 2: "
+                    f"{args.start_date} to {args.end_date} using {args.data}; "
+                    f"WF={args.wf_training_period}/{args.wf_test_period} ({args.wf_window_type})"
+                )
+            else:
+                # Provide sensible defaults if user omitted
+                args.wf_training_period = args.wf_training_period or policy.phase2_cfg.wf_training_period
+                args.wf_test_period = args.wf_test_period or policy.phase2_cfg.wf_test_period
+                args.wf_window_type = args.wf_window_type or policy.phase2_cfg.wf_window_type
+
+        except SplitPolicyError as e:
+            print(f"❌ Split policy violation: {e}")
+            sys.exit(1)
+
+    # Fallback defaults if no policy is present
+    if args.wf_training_period is None:
+        args.wf_training_period = '1 year'
+    if args.wf_test_period is None:
+        args.wf_test_period = '6 months'
+    if args.wf_window_type is None:
+        args.wf_window_type = 'expanding'
+
+    if not args.data:
+        print("Error: --data is required when no split policy is available")
+        sys.exit(1)
+
+    if not args.start_date or not args.end_date:
+        print("Error: --start-date and --end-date are required when no split policy is available")
+        sys.exit(1)
     
     # Load strategy
     strategy_dir = Path(__file__).parent.parent / 'strategies' / args.strategy
@@ -132,15 +232,19 @@ Examples:
         print(f"Error: Config file not found: {config_path}")
         sys.exit(1)
     
-    # Use hierarchical config loader if market symbol provided (like backtest script)
+    # Use hierarchical config loader (market configs + optional config profile)
     market_symbol = args.market or None
-    if market_symbol:
+    if market_symbol or args.config_profile:
         try:
             strategy_config_dict = load_strategy_config_with_market(
                 base_config_path=config_path,
-                market_symbol=market_symbol
+                market_symbol=market_symbol,
+                config_profile=args.config_profile,
             )
-            print(f"✓ Loaded market-specific config for: {market_symbol}")
+            if market_symbol:
+                print(f"✓ Loaded market-specific config for: {market_symbol}")
+            if args.config_profile:
+                print(f"✓ Loaded config profile: {args.config_profile}")
         except FileNotFoundError as e:
             print(f"Warning: {e}")
             print("Falling back to base config only")
@@ -280,10 +384,39 @@ Examples:
         elif isinstance(criteria_config, dict):
             criteria_config_dict = criteria_config
     
+    # Pull dataset lock metadata (Phase 2 consumes OOS)
+    dataset_hash = None
+    try:
+        from validation.state import ValidationStateManager
+        state_manager = ValidationStateManager()
+        state = state_manager.load_state(args.strategy, str(args.data))
+        if state and state.phase2_dataset_lock:
+            dataset_hash = state.phase2_dataset_lock.get('manifest_hash')
+    except Exception:
+        dataset_hash = None
+
+    try:
+        config_hash = sha256_text(canonical_json_dumps(strategy_config_dict))
+    except Exception:
+        config_hash = None
+
     report_data = {
         'phase': 'oos',
         'strategy': args.strategy,
         'passed': result.passed,
+        'date_range': f"{args.start_date} to {args.end_date}",
+        'include_visuals': bool(args.report_visuals),
+        'include_explanations': bool(args.report_explanations),
+        'metadata': {
+            'data_file': str(args.data) if args.data else None,
+            'split_policy': str(args.split_policy) if args.split_policy else None,
+            'split_policy_name': str(args.split_policy_name) if args.split_policy_name else None,
+            'config_profile': str(args.config_profile) if args.config_profile else None,
+            'criteria_file': str(args.criteria) if args.criteria else 'config/validation_criteria.yml',
+            'override_split_policy': bool(args.override_split_policy),
+            'dataset_manifest_hash': dataset_hash,
+            'config_hash': config_hash,
+        },
         'walk_forward': {
             'summary': wf.summary,
             'steps': [

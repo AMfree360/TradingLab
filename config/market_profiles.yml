@@ -7,6 +7,7 @@ markets:
     exchange: binance
     symbol: BTCUSDT
     asset_class: crypto
+    instrument_group: crypto_major
     market_type: spot
     leverage: 1.0
     commission_rate: 0.0004  # 0.04% (Binance spot)
@@ -14,11 +15,14 @@ markets:
     min_trade_size: 10.0  # Minimum trade size in quote currency (USDT)
     price_precision: 2  # Decimal places for price
     quantity_precision: 6  # Decimal places for quantity
+    tick_size: 0.01
+    distance_unit: price
     
   ETHUSDT:
     exchange: binance
     symbol: ETHUSDT
     asset_class: crypto
+    instrument_group: crypto_major
     market_type: spot
     leverage: 1.0
     commission_rate: 0.0004
@@ -26,6 +30,8 @@ markets:
     min_trade_size: 10.0
     price_precision: 2
     quantity_precision: 6
+    tick_size: 0.01
+    distance_unit: price
 
   # BTCUSDT Perpetual Futures (Binance) - Leverage-Based Margin System
   # NOTE: To use futures, you need to either:
@@ -40,12 +46,15 @@ markets:
     exchange: binance
     symbol: BTCUSDT
     asset_class: futures  # CRITICAL: Must be "futures" for futures behavior
+    instrument_group: crypto_perp
     market_type: futures
     leverage: 5.0  # Default leverage (can be changed per position, up to 125x for BTCUSDT)
     margin_mode: cross  # "cross" (account-wide) or "isolated" (position-specific)
     maintenance_margin_rate: 0.005  # 0.5% maintenance margin (Binance typical)
     contract_size: 1.0  # 1 BTC per contract
     tick_value: 0.01  # $0.01 per tick per contract
+    tick_size: 0.01
+    distance_unit: ticks
     commission_per_contract: 2.0  # $2 per contract per side (Binance typical)
     commission_rate: 0.0  # Not used for futures (use commission_per_contract)
     slippage_ticks: 0.01  # 1 tick slippage (tick size = 0.01)
@@ -61,6 +70,7 @@ markets:
     exchange: oanda  # or fxcm, interactive_brokers, etc.
     symbol: EURUSD
     asset_class: forex
+    instrument_group: fx_major
     market_type: spot
     leverage: 30.0  # Typical retail forex leverage (30:1 to 50:1, MT5 often uses 30:1)
     commission_rate: 0.000035  # Forex typically uses spreads, not commissions
@@ -70,11 +80,14 @@ markets:
     quantity_precision: 2  # Lot sizes (e.g., 0.01, 0.10, 1.00)
     pip_value: 0.0001  # For most pairs, 1 pip = 0.0001
     contract_size: 100000  # Standard lot size in base currency
+    tick_size: 0.00001
+    distance_unit: pips
     
   GBPUSD:
     exchange: oanda
     symbol: GBPUSD
     asset_class: forex
+    instrument_group: fx_major
     market_type: spot
     leverage: 1.0
     commission_rate: 0.0
@@ -84,12 +97,15 @@ markets:
     quantity_precision: 2
     pip_value: 0.0001
     contract_size: 100000
+    tick_size: 0.00001
+    distance_unit: pips
 
   # Stock markets (example)
   AAPL:
     exchange: nasdaq
     symbol: AAPL
     asset_class: stock
+    instrument_group: us_equity
     market_type: spot
     leverage: 1.0
     commission_rate: 0.001  # 0.1% typical for stocks
@@ -97,12 +113,15 @@ markets:
     min_trade_size: 1.0  # Minimum 1 share
     price_precision: 2
     quantity_precision: 0  # Whole shares only
+    tick_size: 0.01
+    distance_unit: price
 
   # Futures markets
   MES:
     exchange: cme  # Chicago Mercantile Exchange
     symbol: MES
     asset_class: futures
+    instrument_group: futures_index_micro
     market_type: futures
     leverage: 1.0
     commission_per_contract: 0.87  # Fixed $0.87 per contract per side (NinjaTrader)
@@ -113,8 +132,215 @@ markets:
     quantity_precision: 0  # Whole contracts only
     tick_value: 1.25  # $1.25 per tick per contract
     contract_size: 5.0  # $5 per index point
+    tick_size: 0.25
+    distance_unit: ticks
     initial_margin_per_contract: 2219.0  # Initial margin (overnight)
     intraday_margin_per_contract: 50.0  # Day trading margin (intraday only)
+
+  MNQ:
+    exchange: cme
+    symbol: MNQ
+    asset_class: futures
+    instrument_group: futures_index_micro
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 0.87
+    commission_rate: 0.0
+    slippage_ticks: 0.25
+    min_trade_size: 1.0
+    price_precision: 2
+    quantity_precision: 0
+    tick_value: 0.50
+    contract_size: 2.0
+    tick_size: 0.25
+    distance_unit: ticks
+    initial_margin_per_contract: 2740.0
+    intraday_margin_per_contract: 100.0
+
+  MYM:
+    exchange: cme
+    symbol: MYM
+    asset_class: futures
+    instrument_group: futures_index_micro
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 0.87
+    commission_rate: 0.0
+    slippage_ticks: 1.0
+    min_trade_size: 1.0
+    price_precision: 0
+    quantity_precision: 0
+    tick_value: 0.50
+    contract_size: 0.5
+    tick_size: 1.0
+    distance_unit: ticks
+    initial_margin_per_contract: 1100.0
+    intraday_margin_per_contract: 50.0
+
+  M2K:
+    exchange: cme
+    symbol: M2K
+    asset_class: futures
+    instrument_group: futures_index_micro
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 0.87
+    commission_rate: 0.0
+    slippage_ticks: 0.1
+    min_trade_size: 1.0
+    price_precision: 1
+    quantity_precision: 0
+    tick_value: 0.50
+    contract_size: 5.0
+    tick_size: 0.1
+    distance_unit: ticks
+    initial_margin_per_contract: 800.0
+    intraday_margin_per_contract: 50.0
+
+  ES:
+    exchange: cme
+    symbol: ES
+    asset_class: futures
+    instrument_group: futures_index_mini
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 2.50
+    commission_rate: 0.0
+    slippage_ticks: 0.25
+    min_trade_size: 1.0
+    price_precision: 2
+    quantity_precision: 0
+    tick_value: 12.50
+    contract_size: 50.0
+    tick_size: 0.25
+    distance_unit: ticks
+    initial_margin_per_contract: 22190.0
+    intraday_margin_per_contract: 500.0
+
+  NQ:
+    exchange: cme
+    symbol: NQ
+    asset_class: futures
+    instrument_group: futures_index_mini
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 2.50
+    commission_rate: 0.0
+    slippage_ticks: 0.25
+    min_trade_size: 1.0
+    price_precision: 2
+    quantity_precision: 0
+    tick_value: 5.00
+    contract_size: 20.0
+    tick_size: 0.25
+    distance_unit: ticks
+    initial_margin_per_contract: 27400.0
+    intraday_margin_per_contract: 1000.0
+
+  YM:
+    exchange: cbot
+    symbol: YM
+    asset_class: futures
+    instrument_group: futures_index_mini
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 2.50
+    commission_rate: 0.0
+    slippage_ticks: 1.0
+    min_trade_size: 1.0
+    price_precision: 0
+    quantity_precision: 0
+    tick_value: 5.00
+    contract_size: 5.0
+    tick_size: 1.0
+    distance_unit: ticks
+    initial_margin_per_contract: 11000.0
+    intraday_margin_per_contract: 500.0
+
+  RTY:
+    exchange: cme
+    symbol: RTY
+    asset_class: futures
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 2.50
+    commission_rate: 0.0
+    slippage_ticks: 0.1
+    min_trade_size: 1.0
+    price_precision: 1
+    quantity_precision: 0
+    tick_value: 5.00
+    contract_size: 50.0
+    initial_margin_per_contract: 8000.0
+    intraday_margin_per_contract: 500.0
+
+  MCL:
+    exchange: nymex
+    symbol: MCL
+    asset_class: futures
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 0.87
+    commission_rate: 0.0
+    slippage_ticks: 0.01
+    min_trade_size: 1.0
+    price_precision: 2
+    quantity_precision: 0
+    tick_value: 1.00
+    contract_size: 100.0
+    initial_margin_per_contract: 1200.0
+    intraday_margin_per_contract: 150.0
+
+  CL:
+    exchange: nymex
+    symbol: CL
+    asset_class: futures
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 2.50
+    commission_rate: 0.0
+    slippage_ticks: 0.01
+    min_trade_size: 1.0
+    price_precision: 2
+    quantity_precision: 0
+    tick_value: 10.00
+    contract_size: 1000.0
+    initial_margin_per_contract: 12000.0
+    intraday_margin_per_contract: 1500.0
+
+  MGC:
+    exchange: comex
+    symbol: MGC
+    asset_class: futures
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 0.87
+    commission_rate: 0.0
+    slippage_ticks: 0.1
+    min_trade_size: 1.0
+    price_precision: 1
+    quantity_precision: 0
+    tick_value: 1.00
+    contract_size: 10.0
+    initial_margin_per_contract: 1100.0
+    intraday_margin_per_contract: 150.0
+
+  GC:
+    exchange: comex
+    symbol: GC
+    asset_class: futures
+    market_type: futures
+    leverage: 1.0
+    commission_per_contract: 2.50
+    commission_rate: 0.0
+    slippage_ticks: 0.1
+    min_trade_size: 1.0
+    price_precision: 1
+    quantity_precision: 0
+    tick_value: 10.00
+    contract_size: 100.0
+    initial_margin_per_contract: 11000.0
+    intraday_margin_per_contract: 1500.0
 
 # Asset class defaults (used when market not found in profiles)
 asset_class_defaults:
@@ -137,4 +363,11 @@ asset_class_defaults:
     slippage_ticks: 0.01
     price_precision: 2
     quantity_precision: 0
+
+  futures:
+    commission_rate: 0.0
+    slippage_ticks: 0.0
+    price_precision: 2
+    quantity_precision: 0
+    min_trade_size: 1.0
 

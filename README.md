@@ -34,6 +34,12 @@ The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` 
 
 Monte Carlo defaults
 
+## Why TradingLab
+
+If you’re a self-taught discretionary trader trying to become systematic (without fooling yourself), TradingLab is built to help you turn plain-English ideas into repeatable, testable strategy specs.
+
+- Read: [docs/user/00-why-tradinglab.md](docs/user/00-why-tradinglab.md)
+
 The validation suite defaults to `1000` Monte Carlo iterations per engine. This is the recommended minimum for stable p-value estimates; increase iterations for final validation runs as needed.
 
 Contributing

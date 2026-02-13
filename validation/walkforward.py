@@ -145,7 +145,9 @@ class WalkForwardAnalyzer:
             
             # Don't exceed data range
             if test_end > data_end:
-                test_end = data_end
+                # Do not include a truncated final test window; it tends to be too short
+                # to be statistically meaningful and often produces 0 trades.
+                break
             
             # Only add if we have valid windows
             if test_start < test_end and train_start < train_end:
@@ -219,7 +221,9 @@ class WalkForwardAnalyzer:
             
             # Don't exceed data range
             if test_end > data_end:
-                test_end = data_end
+                # Do not include a truncated final test window; it tends to be too short
+                # to be statistically meaningful and often produces 0 trades.
+                break
             
             # Only add if we have valid windows
             if test_start < test_end and train_start < train_end:

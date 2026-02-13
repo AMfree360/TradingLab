@@ -54,7 +54,8 @@ class BrokerModel:
         quantity: float,
         available_cash: float,
         commission_rate: Optional[float] = None,
-        available_margin: Optional[float] = None
+        available_margin: Optional[float] = None,
+        is_intraday: bool = True,
     ) -> Tuple[bool, float]:
         """Check if account can afford a position.
         
@@ -69,7 +70,7 @@ class BrokerModel:
             Tuple of (can_afford, required_cash)
             required_cash = margin + commission
         """
-        margin = self.calculate_margin_required(entry_price, quantity, is_intraday=True)
+        margin = self.calculate_margin_required(entry_price, quantity, is_intraday=is_intraday)
         # Calculate commission (use fixed per-contract for futures, percentage for others)
         commission = self.calculate_commission(entry_price, quantity, commission_rate)
         required_cash = margin + commission
@@ -149,7 +150,8 @@ class BrokerModel:
         desired_quantity: float,
         available_cash: float,
         commission_rate: Optional[float] = None,
-        available_margin: Optional[float] = None
+        available_margin: Optional[float] = None,
+        is_intraday: bool = True,
     ) -> float:
         """Adjust quantity to fit available cash and margin.
         
@@ -172,7 +174,7 @@ class BrokerModel:
                 available_margin = available_cash
             
             # Calculate max quantity based on margin constraint
-            margin_per_contract = self.calculate_margin_required(entry_price, 1.0, is_intraday=True)
+            margin_per_contract = self.calculate_margin_required(entry_price, 1.0, is_intraday=is_intraday)
             if margin_per_contract > 0:
                 max_qty_by_margin = available_margin / margin_per_contract
             else:

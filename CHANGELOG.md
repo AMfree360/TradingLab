@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Advanced reporting features
 - Strategy marketplace/templates
 
+### Added - 2026-02-12
+- Guided Strategy Builder v2 (GUI): added risk/limits/cost overrides to Advanced (Step 5):
+  - Sizing: `sizing_mode` + `account_size`
+  - Daily limits: `max_trades_per_day` + optional `max_daily_loss_pct`
+  - Backtest costs: optional overrides `commissions` and `slippage_ticks` (market-profile defaults when unset)
+- Guided edit: `.guided.json` sidecar now round-trips the new advanced risk fields and edit-guided rehydrates from the spec.
+- Research pipeline: `StrategySpec` + compiler carry the fields through to generated strategy config (`risk`, `trade_limits`, and optional `backtest` overrides).
+- Advanced defaults API: `/api/advanced-defaults` now exposes commission hints (`commission_rate`, `commission_per_contract`) for market-aware UI guidance.
+
 ### Added - Recent
 - Canonical `ema_crossover` example strategy (EMA 5/100) with ATR stop option and relaxed configs
 - ATR stop config keys: `stop_loss.atr_enabled`, `stop_loss.atr_length`, `stop_loss.atr_multiplier`

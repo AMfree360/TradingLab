@@ -21,7 +21,7 @@ class ConcreteStrategy(StrategyBase):
 
 def create_sample_data(n_bars=100):
     """Create sample OHLCV data."""
-    dates = pd.date_range(start='2024-01-01', periods=n_bars, freq='1H')
+    dates = pd.date_range(start='2024-01-01', periods=n_bars, freq='1h')
     df = pd.DataFrame({
         'open': 100 + pd.Series(range(n_bars)) * 0.1,
         'high': 101 + pd.Series(range(n_bars)) * 0.1,

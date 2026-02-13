@@ -56,12 +56,32 @@ python scripts/run_backtest.py \
 **Options explained**:
 - `--strategy`: Name of your strategy folder
 - `--data`: Path to your data file
+- `--auto-consolidate`: If `--data` resolves to multiple files (glob/directory), consolidate them into a single parquet automatically
+- `--consolidated-output`: Optional output path for the consolidated parquet (used with `--auto-consolidate`)
 - `--capital`: Starting capital (default: 10000)
 - `--commission`: Commission rate per trade (default: 0.0004 = 0.04%)
 - `--slippage`: Slippage in price units (default: 0.0)
 - `--output`: Name for the report (optional)
+- `--report-visuals`: Include optional charts (equity + drawdown) in the HTML report (default: off for compact reports)
 - `--start-date`: Start date for backtest (YYYY-MM-DD). Filters data to this date and later
 - `--end-date`: End date for backtest (YYYY-MM-DD). Filters data up to this date
+
+### Using chunked/manual downloads
+
+If you downloaded data in yearly/monthly chunks, you can either consolidate first or let the runner do it.
+
+Consolidate first (recommended):
+
+```bash
+python3 scripts/consolidate_data.py --input "data/raw/BTCUSDT-15m-*.parquet" --output data/processed/BTCUSDT-15m.parquet
+python3 scripts/run_backtest.py --strategy ema_crossover --data data/processed/BTCUSDT-15m.parquet
+```
+
+Auto-consolidate in the backtest runner:
+
+```bash
+python3 scripts/run_backtest.py --strategy ema_crossover --data "data/raw/BTCUSDT-15m-*.parquet" --auto-consolidate
+```
 
 ### Date Range Filtering
 
@@ -96,8 +116,13 @@ python scripts/run_validation.py \
   --strategy ema_crossover \
   --data data/raw/EURUSD_2020-2025.csv \
   --start-date 2022-01-01 \
-  --end-date 2025-12-31
+  --end-date 2025-12-31 \
+  --override-split-policy
 ```
+
+**Note on split policy**:
+- If you are using the standard split policy (`config/data_splits.yml`), prefer the phase-specific scripts (`run_training_validation.py`, `run_oos_validation.py`, `run_final_oos_test.py`).
+- If you are using your own datasets/date ranges, you will often need `--override-split-policy`.
 
 **Important**: The data file still contains all years, but the backtest only uses the specified date range. This ensures your strategy hasn't "seen" the OOS data during development.
 
@@ -171,7 +196,7 @@ CAGR: 24.50%
 After each backtest, an HTML report is generated in the `reports/` folder. Open it in your web browser to see:
 
 1. **Key Metrics Dashboard**: Color-coded metrics at a glance
-2. **Equity Curve**: Visual chart showing how your account value changed over time
+2. **Equity Curve**: Visual chart showing how your account value changed over time (enable with `--report-visuals`)
 3. **Detailed Metrics Table**: All calculated metrics
 
 ### Equity Curve Interpretation
@@ -319,7 +344,10 @@ python scripts/run_backtest.py --strategy my_strategy --data data/raw/BTCUSDT_1m
 # 2. Review results - looks good!
 
 # 3. Run validation
-python scripts/run_validation.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv
+python scripts/run_training_validation.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv --override-split-policy
+
+# 4. Run OOS validation (walk-forward)
+python scripts/run_oos_validation.py --strategy my_strategy --data data/raw/BTCUSDT_1m.csv --override-split-policy
 
 # 4. Review validation report - passes!
 

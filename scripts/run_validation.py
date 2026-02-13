@@ -17,6 +17,12 @@ from config.config_loader import load_strategy_config_with_market
 from config.market_loader import apply_market_profile
 from reports.report_generator import ReportGenerator
 from adapters.data.data_loader import DataLoader
+from config.data_splits import (
+    maybe_load_policy,
+    enforce_or_fill_dates,
+    enforce_or_fill_data_file,
+    SplitPolicyError,
+)
 
 
 def main():
@@ -30,8 +36,32 @@ def main():
     parser.add_argument(
         '--data',
         type=str,
-        required=True,
-        help='Path to data file (CSV or Parquet)'
+        help='Path to data file (CSV or Parquet). If omitted, uses split policy dataset file.'
+    )
+
+    parser.add_argument(
+        '--phase',
+        type=str,
+        choices=['backtest', 'phase1', 'phase2', 'final_oos'],
+        help='Which split to use from split policy (required when policy exists unless --override-split-policy)'
+    )
+
+    parser.add_argument(
+        '--split-policy',
+        type=str,
+        default='config/data_splits.yml',
+        help='Path to split policy YAML (default: config/data_splits.yml)'
+    )
+    parser.add_argument(
+        '--split-policy-name',
+        type=str,
+        default='default_btcusdt_4h',
+        help='Policy name inside split policy YAML (default: default_btcusdt_4h)'
+    )
+    parser.add_argument(
+        '--override-split-policy',
+        action='store_true',
+        help='Allow running with --data/--start-date/--end-date that do not match split policy (not recommended)'
     )
     parser.add_argument(
         '--market',
@@ -42,6 +72,15 @@ def main():
         '--config',
         type=str,
         help='Path to strategy config file (default: strategies/{strategy}/config.yml)'
+    )
+
+    parser.add_argument(
+        '--config-profile',
+        type=str,
+        help=(
+            'Optional strategy config profile name (loads '
+            'strategies/{strategy}/configs/profiles/{name}.yml)'
+        )
     )
     parser.add_argument(
         '--wf-config',
@@ -87,6 +126,61 @@ def main():
     )
     
     args = parser.parse_args()
+
+    # Apply split policy enforcement (this script can cover multiple phases; require explicit phase selection)
+    try:
+        policy = maybe_load_policy(policy_path=args.split_policy, policy_name=args.split_policy_name)
+    except Exception as e:
+        print(f"⚠️  Warning: Could not load split policy: {e}")
+        policy = None
+
+    if policy is not None and not args.override_split_policy:
+        if not args.phase:
+            print(
+                "❌ Split policy is present and enforced. Provide --phase one of: backtest, phase1, phase2, final_oos\n"
+                "   (or use --override-split-policy to bypass)."
+            )
+            sys.exit(1)
+
+    if policy is not None and args.phase:
+        phase_map = {
+            'backtest': policy.backtest,
+            'phase1': policy.phase1,
+            'phase2': policy.phase2,
+            'final_oos': policy.final_oos,
+        }
+        phase_range = phase_map[args.phase]
+        label = f"Validation ({args.phase})"
+        try:
+            args.data = str(
+                enforce_or_fill_data_file(
+                    phase_range=phase_range,
+                    data_arg=args.data,
+                    override=args.override_split_policy,
+                    label=label,
+                )
+            )
+            start_ts, end_ts = enforce_or_fill_dates(
+                phase_range=phase_range,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                override=args.override_split_policy,
+                label=label,
+            )
+            args.start_date = start_ts.strftime('%Y-%m-%d')
+            args.end_date = end_ts.strftime('%Y-%m-%d')
+            if not args.override_split_policy:
+                print(
+                    f"✓ Split policy enforced ({policy.name}) for {label}: "
+                    f"{args.start_date} to {args.end_date} using {args.data}"
+                )
+        except SplitPolicyError as e:
+            print(f"❌ Split policy violation: {e}")
+            sys.exit(1)
+
+    if not args.data:
+        print("Error: --data is required when no split policy is available")
+        sys.exit(1)
     
     # Load strategy
     strategy_dir = Path(__file__).parent.parent / 'strategies' / args.strategy
@@ -104,15 +198,19 @@ def main():
         print(f"Error: Config file not found: {config_path}")
         sys.exit(1)
     
-    # Use hierarchical config loader if market symbol provided (like backtest script)
+    # Use hierarchical config loader if market symbol and/or config profile is provided
     market_symbol = args.market or None
-    if market_symbol:
+    if market_symbol or args.config_profile:
         try:
             strategy_config_dict = load_strategy_config_with_market(
                 base_config_path=config_path,
-                market_symbol=market_symbol
+                market_symbol=market_symbol,
+                config_profile=args.config_profile,
             )
-            print(f"✓ Loaded market-specific config for: {market_symbol}")
+            if market_symbol:
+                print(f"✓ Loaded market-specific config for: {market_symbol}")
+            if args.config_profile:
+                print(f"✓ Loaded config profile: {args.config_profile}")
         except FileNotFoundError as e:
             print(f"Warning: {e}")
             print("Falling back to base config only")

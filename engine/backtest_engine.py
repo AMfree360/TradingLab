@@ -318,6 +318,10 @@ class BacktestResult:
     leverage_stats: Dict = field(default_factory=dict)
     margin_utilization: Optional[pd.Series] = None
 
+    # Optional fields for research/debugging
+    entry_tf: str = ""
+    price_df: Optional[pd.DataFrame] = None
+
 
 # ============================================================================
 # Backtest Engine
@@ -373,6 +377,10 @@ class BacktestEngine:
         
         # Initialize logger with file and console handlers
         self.logger = logging.getLogger(__name__)
+
+        # Optional: expose entry-timeframe dataframe on BacktestResult for reporting/tests.
+        self._result_entry_tf: Optional[str] = None
+        self._result_price_df: Optional[pd.DataFrame] = None
         if not self.logger.handlers:
             # Create logs directory if it doesn't exist
             logs_dir = Path('data/logs')
@@ -499,8 +507,63 @@ class BacktestEngine:
         # Load trade limits config
         trade_limits_cfg = getattr(strategy.config, 'trade_limits', None)
         self.max_trades_per_day = getattr(trade_limits_cfg, 'max_trades_per_day', None) if trade_limits_cfg else None
-        # Track trades per day: {date: count}
+        self.max_daily_loss_pct = getattr(trade_limits_cfg, 'max_daily_loss_pct', None) if trade_limits_cfg else None
+
+        # Track entries per day: {date: count}
+        # (Used to enforce max_trades_per_day. This counts successful ENTRIES, not exits.)
         self._trades_per_day: Dict[pd.Timestamp, int] = {}
+
+        # Track realized P&L after costs per day (includes partial exits)
+        self._realized_pnl_after_costs_per_day: Dict[pd.Timestamp, float] = {}
+
+        # Track day-start equity for daily sizing / daily loss baselines
+        self._day_start_equity_by_day: Dict[pd.Timestamp, float] = {}
+        self._current_day_key: Optional[pd.Timestamp] = None
+
+        # Debug counters
+        self._daily_loss_rejections: int = 0
+
+    @staticmethod
+    def _day_key(ts: pd.Timestamp) -> pd.Timestamp:
+        return ts.normalize()
+
+    def _ensure_day_initialized(self, ts: pd.Timestamp) -> None:
+        day_key = self._day_key(ts)
+        self._current_day_key = day_key
+        if day_key not in self._day_start_equity_by_day:
+            # Snapshot equity at first bar of the day (may include any carried positions)
+            self._day_start_equity_by_day[day_key] = float(self.account.equity)
+
+    def _get_day_base_equity_for_limits(self, ts: pd.Timestamp) -> float:
+        """Baseline used for daily loss % checks."""
+        risk_cfg = getattr(self.strategy.config, 'risk', None)
+        sizing_mode = getattr(risk_cfg, 'sizing_mode', 'account_size') if risk_cfg else 'account_size'
+        if sizing_mode == 'account_size':
+            acct_size = getattr(risk_cfg, 'account_size', None) if risk_cfg else None
+            return float(acct_size) if acct_size is not None else float(self.initial_capital)
+
+        day_key = self._day_key(ts)
+        base = self._day_start_equity_by_day.get(day_key)
+        if base is None:
+            base = float(self.account.equity)
+            self._day_start_equity_by_day[day_key] = base
+        return float(base)
+
+    def _daily_loss_limit_reached(self, ts: pd.Timestamp) -> bool:
+        if self.max_daily_loss_pct is None:
+            return False
+        try:
+            max_daily_loss_pct = float(self.max_daily_loss_pct)
+        except (TypeError, ValueError):
+            return False
+        if max_daily_loss_pct <= 0:
+            return False
+
+        day_key = self._day_key(ts)
+        realized = float(self._realized_pnl_after_costs_per_day.get(day_key, 0.0))
+        base = self._get_day_base_equity_for_limits(ts)
+        limit_amount = base * (max_daily_loss_pct / 100.0)
+        return realized <= -limit_amount
 
     def _get_entry_fill(
         self,
@@ -583,6 +646,10 @@ class BacktestEngine:
         # Get entry timeframe for bar-by-bar execution (needed even if no signals)
         entry_tf = self.strategy.config.timeframes.entry_tf
         df_entry = df_by_tf[entry_tf]
+
+        # Stash for BacktestResult consumers (tests/reports)
+        self._result_entry_tf = str(entry_tf)
+        self._result_price_df = df_entry
         
         # Initialize Monte Carlo compatible tracking (needed even if no signals)
         # - equity_list: equity after each trade (for integer-indexed equity_curve)
@@ -617,6 +684,9 @@ class BacktestEngine:
             current_time = df_entry.index[idx]
             bar = df_entry.iloc[idx]
             current_price = float(bar['close'])
+
+            # Track day boundaries for daily sizing / daily loss limits
+            self._ensure_day_initialized(current_time)
             
             # Store current bar index for randomized entry context checking
             self._current_bar_index = idx
@@ -1068,11 +1138,11 @@ class BacktestEngine:
             equity_before_partial = self.initial_capital  # First trade
         
         # Calculate P&L after costs
-        pnl_raw_partial = pnl + exit_commission  # Raw P&L before costs
-        pnl_after_costs_partial = pnl  # After commission (slippage already in price)
+        pnl_raw_partial = pnl  # Raw P&L before costs
+        pnl_after_costs_partial = pnl - exit_commission
         
-        # Update account
-        self.account.cash += pnl
+        # Update account (commission reduces cash)
+        self.account.cash += (pnl - exit_commission)
         self.account.commission_paid += exit_commission
         slippage_price = self.broker._slippage_price_units()
         self.account.slippage_paid += slippage_price * abs(partial_size)
@@ -1118,6 +1188,12 @@ class BacktestEngine:
             partial_exits=[]  # Partial trades don't have nested partials
         )
         self.trades.append(partial_trade)
+
+        # Track realized P&L after costs for daily loss caps
+        day_key = current_time.normalize()
+        self._realized_pnl_after_costs_per_day[day_key] = (
+            self._realized_pnl_after_costs_per_day.get(day_key, 0.0) + float(pnl_after_costs_partial)
+        )
         
         # MONTE CARLO COMPATIBLE: Track equity and returns for partial trade
         self.equity_list.append(equity_after_partial)
@@ -1349,6 +1425,17 @@ class BacktestEngine:
             signals: Signals DataFrame
             df_by_tf: Multi-timeframe data
         """
+        # Initialize day tracking (safe when called outside run())
+        self._ensure_day_initialized(current_time)
+
+        # Enforce max daily loss cap: stop taking new trades for the rest of the day
+        if self._daily_loss_limit_reached(current_time):
+            self._daily_loss_rejections += 1
+            # Drop any waiting signals; they should not carry past a forced daily-stop.
+            if hasattr(self, 'pending_signals'):
+                self.pending_signals = []
+            return
+
         # STEP 3: Check for randomized entry context (force entry when enabled)
         # This bypasses normal signal validation but uses identical execution path
         if self.randomized_entry_context.enabled:
@@ -1410,7 +1497,7 @@ class BacktestEngine:
                                     # Calculate position size (AFTER stop is recalculated)
                                     risk_config = self.strategy.config.risk
                                     risk_pct = risk_config.risk_per_trade_pct
-                                    quantity = self._calculate_position_size(entry_price, stop_price, risk_pct)
+                                    quantity = self._calculate_position_size(entry_price, stop_price, risk_pct, current_time=current_time)
                                     
                                     if quantity > 0:
                                         # Force entry execution (bypasses should_enter check)
@@ -1463,19 +1550,6 @@ class BacktestEngine:
                                 # Check if we can take another position (respect max_positions limit)
                                 exec_cfg = getattr(self.strategy.config, 'execution', None)
                                 max_positions = getattr(exec_cfg, 'max_positions', 1) if exec_cfg else 1
-                                
-                                # Check max trades per day limit
-                                if self.max_trades_per_day is not None:
-                                    current_date = current_time.normalize()
-                                    trades_today = self._trades_per_day.get(current_date, 0)
-                                    if trades_today >= self.max_trades_per_day:
-                                        # Daily limit reached, skip this signal
-                                        if not hasattr(self, '_immediate_exec_failures'):
-                                            self._immediate_exec_failures = {}
-                                        if 'daily_limit' not in self._immediate_exec_failures:
-                                            self._immediate_exec_failures['daily_limit'] = 0
-                                        self._immediate_exec_failures['daily_limit'] += 1
-                                        continue  # Skip this signal
                                 
                                 if len(self.positions) < max_positions:  # Allow multiple positions up to max_positions
                                     entry_tf = self.strategy.config.timeframes.entry_tf
@@ -1532,7 +1606,7 @@ class BacktestEngine:
                                                 # Calculate position size
                                                 risk_config = self.strategy.config.risk
                                                 risk_pct = risk_config.risk_per_trade_pct
-                                                quantity = self._calculate_position_size(decision_close, stop_price, risk_pct)
+                                                quantity = self._calculate_position_size(decision_close, stop_price, risk_pct, current_time=fill_time)
                                                 
                                                 if quantity > 0:
                                                     # Try to execute immediately
@@ -1578,17 +1652,6 @@ class BacktestEngine:
         
         if len(self.positions) >= max_positions:
             return  # Already at max positions, skip processing pending signals
-        
-        # Check max trades per day limit
-        if self.max_trades_per_day is not None:
-            current_date = current_time.normalize()
-            trades_today = self._trades_per_day.get(current_date, 0)
-            if trades_today >= self.max_trades_per_day:
-                # Daily limit reached, skip processing pending signals
-                if not hasattr(self, '_daily_limit_rejections'):
-                    self._daily_limit_rejections = 0
-                self._daily_limit_rejections += 1
-                return
         
         entry_tf = self.strategy.config.timeframes.entry_tf
         df_entry = df_by_tf.get(entry_tf)
@@ -1725,6 +1788,16 @@ class BacktestEngine:
                 continue
             fill_time, fill_price = fill
 
+            # Enforce max trades/day based on the actual fill date
+            if self.max_trades_per_day is not None:
+                fill_day = fill_time.normalize()
+                trades_today = self._trades_per_day.get(fill_day, 0)
+                if trades_today >= self.max_trades_per_day:
+                    if not hasattr(self, '_daily_limit_rejections'):
+                        self._daily_limit_rejections = 0
+                    self._daily_limit_rejections += 1
+                    continue
+
             # If the fill open gaps beyond the stop, skip (would be immediately stopped)
             if (dir_int == 1 and fill_price <= stop_price) or (dir_int == -1 and fill_price >= stop_price):
                 rejected_count['invalid_stop'] += 1
@@ -1733,14 +1806,19 @@ class BacktestEngine:
             # Position sizing
             risk_config = self.strategy.config.risk
             risk_pct = risk_config.risk_per_trade_pct
-            quantity = self._calculate_position_size(decision_close, stop_price, risk_pct)
+            quantity = self._calculate_position_size(decision_close, stop_price, risk_pct, current_time=fill_time)
             if quantity <= 0:
                 rejected_count['zero_quantity'] += 1
                 # Log why quantity is zero with detailed diagnostics
                 if rejected_count['zero_quantity'] <= 5:  # Log first 5 for better diagnostics
                     price_risk = abs(entry_price - stop_price)
-                    account_size = risk_config.account_size if risk_config.sizing_mode == "account_size" else self.account.equity
-                    risk_amount = account_size * (risk_pct / 100.0)
+                    if risk_config.sizing_mode == "account_size":
+                        sizing_base = float(risk_config.account_size)
+                    elif risk_config.sizing_mode == "daily_equity":
+                        sizing_base = float(self._day_start_equity_by_day.get(fill_time.normalize(), self.account.equity))
+                    else:
+                        sizing_base = float(self.account.equity)
+                    risk_amount = sizing_base * (risk_pct / 100.0)
                     # Get stop loss calculation details for diagnostics
                     sl_ma_val = entry_row.get('sl_ma', 'N/A')
                     sl_config = self.strategy.config.stop_loss
@@ -1758,7 +1836,7 @@ class BacktestEngine:
                     self.logger.debug(f"zero_quantity - entry={entry_price:.5f}, stop={stop_price:.5f}, "
                                      f"price_risk={price_risk:.6f}{pip_info}, "
                                      f"sl_ma={sl_ma_val}, buffer={buffer_info}, "
-                                     f"risk_amount=${risk_amount:.2f}, account_size=${account_size:.2f}, "
+                                     f"risk_amount=${risk_amount:.2f}, sizing_base=${sizing_base:.2f}, "
                                      f"direction={'long' if dir_int == 1 else 'short'}")
                 continue
             
@@ -1812,7 +1890,8 @@ class BacktestEngine:
         self,
         entry_price: float,
         stop_price: float,
-        risk_pct: float
+        risk_pct: float,
+        current_time: Optional[pd.Timestamp] = None,
     ) -> float:
         """Calculate position size based on risk percentage.
         
@@ -1833,6 +1912,17 @@ class BacktestEngine:
             # Fixed risk based on account_size (more realistic, recommended)
             account_size = risk_config.account_size or self.initial_capital
             risk_amount = account_size * (risk_pct / 100.0)
+        elif risk_config.sizing_mode == "daily_equity":
+            ts = current_time
+            if ts is None:
+                ts = self._current_day_key
+            if ts is None:
+                ts = pd.Timestamp.utcnow()
+            day_key = self._day_key(pd.Timestamp(ts))
+            base = float(self._day_start_equity_by_day.get(day_key, float(self.account.equity)))
+            if base <= 0:
+                return 0.0
+            risk_amount = base * (risk_pct / 100.0)
         else:
             # Dynamic risk based on current equity (compounds gains)
             current_equity = self.account.equity
@@ -1849,6 +1939,14 @@ class BacktestEngine:
         if portfolio_enabled and max_open_risk_pct is not None and max_open_risk_pct > 0:
             if risk_config.sizing_mode == "account_size":
                 portfolio_base = risk_config.account_size or self.initial_capital
+            elif risk_config.sizing_mode == "daily_equity":
+                ts = current_time
+                if ts is None:
+                    ts = self._current_day_key
+                if ts is None:
+                    ts = pd.Timestamp.utcnow()
+                day_key = self._day_key(pd.Timestamp(ts))
+                portfolio_base = float(self._day_start_equity_by_day.get(day_key, float(self.account.equity)))
             else:
                 portfolio_base = self.account.equity
 
@@ -1882,7 +1980,14 @@ class BacktestEngine:
             # DEBUG: Log position sizing only for very tight stops (<2 pips)
             import warnings
             if stop_loss_pips < 2.0:
-                base_amount = risk_config.account_size if risk_config.sizing_mode == "account_size" else self.account.equity
+                if risk_config.sizing_mode == "account_size":
+                    base_amount = float(risk_config.account_size)
+                elif risk_config.sizing_mode == "daily_equity":
+                    ts = current_time or self._current_day_key or pd.Timestamp.utcnow()
+                    day_key = self._day_key(pd.Timestamp(ts))
+                    base_amount = float(self._day_start_equity_by_day.get(day_key, self.account.equity))
+                else:
+                    base_amount = float(self.account.equity)
                 warnings.warn(
                     f"Position sizing: entry={entry_price:.5f}, stop={stop_price:.5f}, "
                     f"price_risk={price_risk:.5f}, pip_size={pip_size}, "
@@ -1925,7 +2030,14 @@ class BacktestEngine:
             max_reasonable_lot_size = 10.0
             if lot_size > max_reasonable_lot_size:
                 import warnings
-                base_amount = risk_config.account_size if risk_config.sizing_mode == "account_size" else self.account.equity
+                if risk_config.sizing_mode == "account_size":
+                    base_amount = float(risk_config.account_size)
+                elif risk_config.sizing_mode == "daily_equity":
+                    ts = current_time or self._current_day_key or pd.Timestamp.utcnow()
+                    day_key = self._day_key(pd.Timestamp(ts))
+                    base_amount = float(self._day_start_equity_by_day.get(day_key, self.account.equity))
+                else:
+                    base_amount = float(self.account.equity)
                 warnings.warn(
                     f"⚠️ Position size too large: lot_size={lot_size:.4f} lots ({quantity:,.0f} units), "
                     f"entry={entry_price:.5f}, stop={stop_price:.5f}, "
@@ -2362,6 +2474,11 @@ class BacktestEngine:
                 position.target_price = position.tp_levels[0]['price']
         
         self.positions.append(position)
+
+        # Track entries per day for max_trades_per_day limit
+        if self.max_trades_per_day is not None:
+            entry_day = current_time.normalize()
+            self._trades_per_day[entry_day] = self._trades_per_day.get(entry_day, 0) + 1
         
         # Return True to indicate successful entry
         return True
@@ -2494,13 +2611,12 @@ class BacktestEngine:
         )
         
         self.trades.append(trade)
-        
-        # Track trade per day for max_trades_per_day limit
-        if self.max_trades_per_day is not None:
-            trade_date = exit_time.normalize()  # Use exit date (normalized to midnight)
-            if trade_date not in self._trades_per_day:
-                self._trades_per_day[trade_date] = 0
-            self._trades_per_day[trade_date] += 1
+
+        # Track realized P&L after costs for daily loss caps
+        day_key = exit_time.normalize()
+        self._realized_pnl_after_costs_per_day[day_key] = (
+            self._realized_pnl_after_costs_per_day.get(day_key, 0.0) + float(pnl_after_costs)
+        )
         
         # MONTE CARLO COMPATIBLE: Track equity and returns
         self.equity_list.append(equity_after)
@@ -2865,6 +2981,9 @@ class BacktestEngine:
             exposure_stats=exposure_stats,
             leverage_stats=leverage_stats,
             margin_utilization=margin_util_series
+            ,
+            entry_tf=(self._result_entry_tf or ""),
+            price_df=self._result_price_df,
         )
     
     def _calculate_exposure_stats(self) -> Dict:

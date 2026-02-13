@@ -4,6 +4,9 @@
 import argparse
 import sys
 from pathlib import Path
+import glob
+import hashlib
+import json
 import pandas as pd
 
 # Add parent directory to path
@@ -17,6 +20,7 @@ from config.market_loader import apply_market_profile, create_market_override_fr
 from config.config_loader import load_strategy_config_with_market
 from metrics.metrics import calculate_enhanced_metrics
 from reports.report_generator import ReportGenerator
+from config.data_splits import maybe_load_policy, enforce_or_fill_dates, SplitPolicyError
 
 
 def main():
@@ -32,10 +36,40 @@ def main():
         type=str,
         help='Path to data file (CSV or Parquet). If not provided, will download test data.'
     )
+
+    parser.add_argument(
+        '--auto-consolidate',
+        action='store_true',
+        help='If --data resolves to multiple files (directory/glob), consolidate into a single parquet automatically'
+    )
+    parser.add_argument(
+        '--consolidated-output',
+        type=str,
+        help='Optional output path for consolidated parquet (used with --auto-consolidate)'
+    )
     parser.add_argument(
         '--download-data',
         action='store_true',
         help='Download test data automatically if data file not found'
+    )
+    parser.add_argument(
+        '--download-provider',
+        type=str,
+        choices=['binance_api', 'binance_vision', 'yfinance', 'stooq'],
+        default='binance_api',
+        help='Data provider for auto-download (default: binance_api)'
+    )
+    parser.add_argument(
+        '--download-provider-market',
+        type=str,
+        choices=['spot', 'futures_um'],
+        default='spot',
+        help='Provider market type (binance_vision only). (default: spot)'
+    )
+    parser.add_argument(
+        '--download-yf-auto-adjust',
+        action='store_true',
+        help='Yahoo Finance: auto-adjust OHLC for splits/dividends'
     )
     parser.add_argument(
         '--download-symbol',
@@ -69,6 +103,12 @@ def main():
         type=str,
         help='Output report name (default: auto-generated)'
     )
+
+    parser.add_argument(
+        '--report-visuals',
+        action='store_true',
+        help='Include optional charts/visualizations in the HTML report (default: off for compact reports)'
+    )
     parser.add_argument(
         '--capital',
         type=float,
@@ -84,8 +124,8 @@ def main():
     parser.add_argument(
         '--slippage',
         type=float,
-        default=0.0,
-        help='Slippage in ticks (default: 0.0)'
+        default=None,
+        help='Slippage in ticks/pips/native units. If omitted, uses config/market profile. Use 0 to explicitly disable.'
     )
     parser.add_argument(
         '--market',
@@ -118,6 +158,36 @@ def main():
         type=str,
         help='End date for backtest (YYYY-MM-DD). Filters data up to this date. Useful for reserving later data for OOS testing.'
     )
+
+    parser.add_argument(
+        '--split-policy',
+        type=str,
+        default='config/data_splits.yml',
+        help='Path to split policy YAML (default: config/data_splits.yml)'
+    )
+    parser.add_argument(
+        '--split-policy-name',
+        type=str,
+        default='default_btcusdt_4h',
+        help='Policy name inside split policy YAML (default: default_btcusdt_4h)'
+    )
+    parser.add_argument(
+        '--override-split-policy',
+        action='store_true',
+        help='Allow backtest date range outside split policy (not recommended)'
+    )
+    parser.add_argument(
+        '--split-policy-mode',
+        type=str,
+        choices=['enforce', 'auto', 'none'],
+        default='enforce',
+        help=(
+            "Split policy behavior for backtests. "
+            "enforce: always apply policy (default). "
+            "auto: apply only when no --data is provided (downloaded/policy datasets). "
+            "none: never apply split policy."
+        ),
+    )
     parser.add_argument(
         '--config-profile',
         type=str,
@@ -130,6 +200,75 @@ def main():
     )
     
     args = parser.parse_args()
+
+    def _expand_data_spec(spec: str) -> list[Path]:
+        if not spec:
+            return []
+
+        # Glob patterns
+        if any(ch in spec for ch in ['*', '?', '[']):
+            return [Path(p) for p in sorted(glob.glob(spec))]
+
+        path = Path(spec)
+        if path.is_dir():
+            # Non-recursive by default; keeps behavior predictable.
+            files = []
+            files.extend(sorted(path.glob('*.parquet')))
+            files.extend(sorted(path.glob('*.csv')))
+            return files
+
+        return [path]
+
+    def _consolidation_cache_key(paths: list[Path]) -> str:
+        entries = []
+        for p in paths:
+            try:
+                st = p.stat()
+                entries.append({'path': str(p), 'size': int(st.st_size), 'mtime_ns': int(st.st_mtime_ns)})
+            except Exception:
+                entries.append({'path': str(p)})
+        blob = json.dumps(entries, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        return hashlib.sha256(blob).hexdigest()
+
+    # Apply split policy for backtests (helps prevent accidentally consuming OOS/holdout)
+    apply_split_policy = True
+    if args.split_policy_mode == 'none':
+        apply_split_policy = False
+    elif args.split_policy_mode == 'auto':
+        # In auto mode, if user supplies explicit --data, assume they want to run that dataset's full range
+        # (split policies are mainly for canonical/policy datasets or auto-downloaded data).
+        apply_split_policy = args.data is None
+
+    if apply_split_policy:
+        try:
+            policy = maybe_load_policy(policy_path=args.split_policy, policy_name=args.split_policy_name)
+        except Exception:
+            policy = None
+
+        if policy is not None:
+            try:
+                start_ts, end_ts = enforce_or_fill_dates(
+                    phase_range=policy.backtest,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    override=args.override_split_policy,
+                    label='Backtest',
+                )
+                args.start_date = start_ts.strftime('%Y-%m-%d')
+                args.end_date = end_ts.strftime('%Y-%m-%d')
+                if not args.override_split_policy and (args.start_date or args.end_date):
+                    print(
+                        f"✓ Split policy enforced ({policy.name}) for backtest: "
+                        f"{args.start_date} to {args.end_date}"
+                    )
+            except SplitPolicyError as e:
+                print(f"❌ Split policy violation: {e}")
+                sys.exit(1)
+    else:
+        if args.split_policy_mode != 'none':
+            # Only message for 'auto' skips to avoid noise when user explicitly sets 'none'.
+            if args.data is not None:
+                print("ℹ Split policy skipped (custom --data provided, split-policy-mode=auto)")
     
     # Load strategy
     strategy_dir = Path(__file__).parent.parent / 'strategies' / args.strategy
@@ -183,7 +322,7 @@ def main():
             market_type=args.market_type,
             leverage=args.leverage,
             commission=args.commission if args.commission != 0.0004 else None,
-            slippage=args.slippage if args.slippage != 0.0 else None
+            slippage=args.slippage
         )
         config_dict = apply_market_profile(
             config_dict,
@@ -203,7 +342,7 @@ def main():
         if 'backtest' not in config_dict:
             config_dict['backtest'] = {}
         config_dict['backtest']['commissions'] = args.commission
-    if args.slippage != 0.0:
+    if args.slippage is not None:
         if 'backtest' not in config_dict:
             config_dict['backtest'] = {}
         config_dict['backtest']['slippage_ticks'] = args.slippage
@@ -273,7 +412,7 @@ def main():
     
     # Get commission and slippage from config if not overridden by CLI
     commission_rate = args.commission if args.commission != 0.0004 else None
-    slippage_ticks = args.slippage if args.slippage != 0.0 else None
+    slippage_ticks = args.slippage if args.slippage is not None else None
     
     # If not provided via CLI, try to get from config.backtest
     if commission_rate is None:
@@ -302,12 +441,13 @@ def main():
     
     # Handle data file
     if args.data:
-        data_path = Path(args.data)
-        if not data_path.exists():
+        expanded = _expand_data_spec(args.data)
+
+        if len(expanded) == 0:
             if args.download_data:
-                print(f"Data file not found: {data_path}")
+                print(f"Data input not found: {args.data}")
                 print("Downloading test data...")
-                from scripts.download_data import download_binance_data
+                from scripts.download_data import download_market_data
                 from datetime import datetime, timedelta
                 
                 # Set default dates if not provided
@@ -323,22 +463,76 @@ def main():
                     start_dt = datetime.now() - timedelta(days=365)
                     start_date = start_dt.strftime('%Y-%m-%d')
                 
-                # Download data
-                download_binance_data(
+                download_market_data(
+                    provider=args.download_provider,
                     symbol=args.download_symbol,
                     interval=args.download_interval,
                     start_date=start_date,
                     end_date=end_date,
-                    output_path=data_path
+                    output_path=data_path,
+                    market_type=args.download_provider_market,
+                    yf_auto_adjust=bool(args.download_yf_auto_adjust),
                 )
+                # Keep same semantics: downloaded data_path is used below.
+                data_path = Path(args.data)
             else:
-                print(f"Error: Data file not found: {data_path}")
+                print(f"❌ Error: Data input not found: {args.data}")
                 print("Tip: Use --download-data to automatically download test data")
                 sys.exit(1)
+
+        elif len(expanded) == 1:
+            data_path = expanded[0]
+
+        else:
+            # Multiple files: either consolidate or fail with an actionable message.
+            print(f"\nℹ Data input resolves to {len(expanded)} files.")
+
+            do_consolidate = bool(args.auto_consolidate)
+            if not do_consolidate and sys.stdin.isatty():
+                resp = input("Consolidate them into a single parquet for backtesting? [y/N]: ")
+                do_consolidate = resp.strip().lower() == 'y'
+
+            if not do_consolidate:
+                print("\n❌ Backtest expects a single OHLCV file.")
+                print("Either:")
+                print("  - Run: python scripts/consolidate_data.py --input <files...> --output <out.parquet>")
+                print("  - Or re-run with: --auto-consolidate")
+                sys.exit(1)
+
+            from scripts.consolidate_data import consolidate_files
+
+            if args.consolidated_output:
+                consolidated_path = Path(args.consolidated_output)
+            else:
+                cache_key = _consolidation_cache_key(expanded)[:12]
+                out_dir = Path(__file__).parent.parent / 'data' / 'processed' / 'consolidated'
+                consolidated_path = out_dir / f"consolidated_{cache_key}.parquet"
+
+            if consolidated_path.exists():
+                print(f"✓ Using existing consolidated file: {consolidated_path}")
+                data_path = consolidated_path
+            else:
+                try:
+                    print(f"Consolidating to: {consolidated_path}")
+                    consolidate_files(
+                        input_files=[Path(p) for p in expanded],
+                        output_path=consolidated_path,
+                        sort=True,
+                        remove_duplicates=True,
+                    )
+                    data_path = consolidated_path
+                except Exception as e:
+                    print(f"\n❌ Consolidation failed: {e}")
+                    print("\nCommon fixes:")
+                    print("  - Mixed intervals (daily + hourly): resample to one timeframe first")
+                    print("    (see: python scripts/resample_ohlcv.py --src ... --dst ... --rule 4h)")
+                    print("  - Missing candles: optionally fill a perfect grid")
+                    print("    (see: python scripts/fill_timegrid.py --input ... --output ... --freq 4h)")
+                    sys.exit(1)
     else:
         # No data provided, download test data
         print("No data file provided. Downloading test data...")
-        from scripts.download_data import download_binance_data
+        from scripts.download_data import download_market_data
         from datetime import datetime, timedelta
         
         # Set default dates
@@ -357,12 +551,15 @@ def main():
         data_path = data_dir / filename
         
         # Download data
-        download_binance_data(
+        download_market_data(
+            provider=args.download_provider,
             symbol=args.download_symbol,
             interval=args.download_interval,
             start_date=start_date,
             end_date=end_date,
-            output_path=data_path
+            output_path=data_path,
+            market_type=args.download_provider_market,
+            yf_auto_adjust=bool(args.download_yf_auto_adjust),
         )
     
     # Load and filter data if date range specified
@@ -437,7 +634,23 @@ def main():
 
             if do_resample:
                 # Perform resampling and save to data/raw with new filename
-                rule = requested_entry_tf.replace('m', 'T').replace('h', 'H').replace('d', 'D')
+                def _tf_to_pandas_rule(tf: str) -> str:
+                    s = str(tf).strip().lower()
+                    if len(s) < 2:
+                        raise ValueError(f"Invalid timeframe: {tf}")
+                    unit = s[-1]
+                    n = int(s[:-1])
+                    if unit == "m":
+                        return f"{n}min"
+                    if unit == "h":
+                        return f"{n}h"
+                    if unit == "d":
+                        return f"{n}D"
+                    if unit == "w":
+                        return f"{n}W"
+                    raise ValueError(f"Invalid timeframe unit: {tf}")
+
+                rule = _tf_to_pandas_rule(requested_entry_tf)
                 # Build output path by replacing timeframe token if present in filename
                 data_path_obj = Path(data_path)
                 dst_name = data_path_obj.name
@@ -545,10 +758,21 @@ def main():
     # Generate report
     reports_dir = Path(__file__).parent.parent / 'reports'
     generator = ReportGenerator(reports_dir)
+
+    # Basic metadata for reproducibility in report header
+    report_metadata = {
+        'data_file': str(data_path) if 'data_path' in locals() else (str(args.data) if args.data else None),
+        'split_policy': str(args.split_policy) if hasattr(args, 'split_policy') else None,
+        'split_policy_name': str(args.split_policy_name) if hasattr(args, 'split_policy_name') else None,
+        'config_profile': str(args.config_profile) if hasattr(args, 'config_profile') and args.config_profile else None,
+        'override_split_policy': bool(args.override_split_policy) if hasattr(args, 'override_split_policy') else None,
+    }
     report_path = generator.generate_backtest_report(
         result=result,
         enhanced_metrics=enhanced_metrics,
-        output_name=args.output
+        output_name=args.output,
+        metadata=report_metadata,
+        include_visuals=bool(args.report_visuals),
     )
     
     print(f"\nReport saved to: {report_path}")

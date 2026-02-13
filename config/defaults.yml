@@ -16,10 +16,15 @@ backtest:
 
 # Default risk settings
 risk:
-  sizing_mode: equity  # or account_size
+  sizing_mode: account_size  # account_size | equity | daily_equity
   risk_per_trade_pct: 1.0
   account_size: 10000
   max_positions: 1
+
+# Default trade/day limits
+trade_limits:
+  max_trades_per_day: 1
+  max_daily_loss_pct: 3.0  # Set to null to disable
 
 # Default validation settings
 validation:

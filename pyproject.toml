@@ -33,6 +33,10 @@ plotting = [
     "jinja2>=3.1.0",
 ]
 
+providers = [
+    "yfinance>=1.0.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

@@ -12,7 +12,7 @@ def _build_simple_backtest():
     trade_returns = np.array([0.01, -0.005, 0.02, -0.01])
     equity = [initial]
     trades = []
-    timestamps = pd.date_range(start="2023-01-01", periods=len(trade_returns) + 1, freq='T')
+    timestamps = pd.date_range(start="2023-01-01", periods=len(trade_returns) + 1, freq='min')
     for i, r in enumerate(trade_returns):
         before = equity[-1]
         pnl = before * r
@@ -48,7 +48,7 @@ def _build_simple_backtest():
 
 def _build_price_series(n=200):
     # simple deterministic price series
-    idx = pd.date_range(start="2023-01-01", periods=n, freq='T')
+    idx = pd.date_range(start="2023-01-01", periods=n, freq='min')
     prices = pd.Series(100.0 + np.cumsum(np.ones(n) * 0.01), index=idx)
     return prices
 

@@ -6,23 +6,30 @@ Welcome to Trading Lab! This documentation is designed for **users** who want to
 
 ## 📚 Documentation Index
 
+### 🧭 Why TradingLab
+- **[Why TradingLab Exists](00-why-tradinglab.md)** - Philosophy, who it’s for, and what it protects you from
+
 ### 🚀 Getting Started
 - **[Getting Started Guide](01-getting-started.md)** - Start here! Installation and your first backtest
 - **[Complete Workflow Guide](02-complete-workflow.md)** - Step-by-step process from idea to live trading ⭐ **RECOMMENDED**
 
 ### 📊 Using the System
 - **[Data Management Guide](03-data-management.md)** - How to get, organize, and manage historical data
+- **[Strategy Development Guide](13-strategy-development.md)** - How to create a new strategy (user-friendly)
+- **[GUI Launcher (No-Code Workflow)](15-gui-launcher.md)** - Create/edit/compile/backtest from the local web UI
 - **[Configuration Guide](04-configuration.md)** - How to configure your strategies (detailed explanation of every setting)
 - **[Backtesting Guide](05-backtesting.md)** - How to run backtests and understand results
 - **[Validation Guide](06-validation.md)** - How to validate strategies (ensuring they're not just lucky)
 - **[Optimization Guide](07-optimization.md)** - How to optimize strategy parameters (without overfitting)
 - **[Reports Guide](08-reports.md)** - How to read and interpret all reports and metrics
+- **[Research Layer (No-Code Strategy Builder)](14-research-layer.md)** - Write strategies in YAML and compile them into TradingLab
 
 ### 💰 Live Trading
 - **[Live Trading Guide](09-live-trading.md)** - How to prepare and run strategies with real money (safety first!)
 
 ### 🛠️ Reference
 - **[Scripts Reference](10-scripts-reference.md)** - Complete reference for all command-line tools
+- **[Golden Path: Split Policy + Config Profiles](11-split-policy-and-profiles.md)** - Standardized, reproducible workflow (recommended)
 
 ## 🎯 Quick Start Path
 

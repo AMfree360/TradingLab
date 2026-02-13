@@ -18,6 +18,7 @@ Comprehensive guides written for beginners, assuming no prior knowledge of progr
 - Getting Started Guide
 - Complete Workflow (Development → Validation → Live Trading)
 - Data Management
+- Strategy Development
 - Configuration (including Trade Management architecture)
 - Backtesting
 - Validation
@@ -54,6 +55,8 @@ Technical deep-dives into architecture, design patterns, extension points, and i
 
 **Start here**: [User Documentation → Getting Started](user/01-getting-started.md)
 
+Then read (recommended): [User Documentation → Why TradingLab Exists](user/00-why-tradinglab.md)
+
 Then follow: [User Documentation → Complete Workflow](user/02-complete-workflow.md) ⭐ **Recommended**
 
 ### Want to Extend the System?
@@ -68,16 +71,20 @@ Then see: [Developer Documentation → Extension Points](dev/06-extension-points
 
 All user documentation is in `/docs/user/`:
 
+- **[Why TradingLab Exists](user/00-why-tradinglab.md)** - Philosophy, who it’s for, and what it protects you from
+
 1. **[Getting Started](user/01-getting-started.md)** - Installation and first steps
 2. **[Complete Workflow](user/02-complete-workflow.md)** - Step-by-step process ⭐ **START HERE**
 3. **[Data Management](user/03-data-management.md)** - Getting and managing data
-4. **[Configuration](user/04-configuration.md)** - Configuring strategies
-5. **[Backtesting](user/05-backtesting.md)** - Running backtests
-6. **[Validation](user/06-validation.md)** - Validating strategies
-7. **[Optimization](user/07-optimization.md)** - Optimizing parameters
-8. **[Reports](user/08-reports.md)** - Understanding results
-9. **[Live Trading](user/09-live-trading.md)** - Running strategies live
-10. **[Scripts Reference](user/10-scripts-reference.md)** - All command-line tools
+4. **[Strategy Development](user/13-strategy-development.md)** - Creating a strategy (user-friendly)
+5. **[Configuration](user/04-configuration.md)** - Configuring strategies
+6. **[Backtesting](user/05-backtesting.md)** - Running backtests
+7. **[Validation](user/06-validation.md)** - Validating strategies
+8. **[Optimization](user/07-optimization.md)** - Optimizing parameters
+9. **[Reports](user/08-reports.md)** - Understanding results
+10. **[Live Trading](user/09-live-trading.md)** - Running strategies live
+11. **[Scripts Reference](user/10-scripts-reference.md)** - All command-line tools
+12. **[Golden Path: Split Policy + Config Profiles](user/11-split-policy-and-profiles.md)** - Standardized, reproducible workflow
 
 ### Developer-Focused Guides
 

@@ -30,7 +30,7 @@ def test_manifest_helpers_infer_bar_seconds_and_missing_estimates():
     # Basic smoke to ensure manifest helpers behave on regular data
     from repro.dataset_manifest import infer_bar_seconds, estimate_missing_bars
 
-    idx = pd.date_range("2020-01-01", periods=10, freq="1H")
+    idx = pd.date_range("2020-01-01", periods=10, freq="1h")
     assert infer_bar_seconds(idx) == 3600
 
     # Remove 2 hours (one gap of 3h implies 2 missing bars)

@@ -41,6 +41,7 @@ class MarketSpec(_MarketSpec):
             contract_size=merged.get("contract_size"),
             pip_value=merged.get("pip_value"),
             tick_value=merged.get("tick_value"),
+            tick_size=merged.get("tick_size"),
             min_trade_size=merged.get("min_trade_size", 0.01),
             lot_step=merged.get("lot_step", 0.01),
             price_precision=merged.get("price_precision", 5),

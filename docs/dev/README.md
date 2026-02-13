@@ -2,6 +2,12 @@
 
 Welcome to the developer documentation for Trading Lab! This documentation is designed for **developers and engineers** who want to extend, maintain, or contribute to the Trading Lab system.
 
+## GUI Status (Local-Only)
+
+The current supported public interface is the **CLI scripts** in `scripts/` (build strategies, backtest, validate, generate reports).
+
+The **GUI web interface** is under active development and is intentionally kept **local-only** for now (excluded via `.gitignore`) so it doesn't ship in the GitHub repo until it's ready.
+
 ## 📚 Documentation Index
 
 ### 🏗️ Architecture & Design

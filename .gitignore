@@ -87,14 +87,12 @@ validation_state/
 # Local experiment registry / scratch
 .experiments/
 
-# Local GUI / strategy / AI work (keep local; don't commit)
+# Local GUI web interface (keep local; don't commit yet)
 gui_launcher/
-ai/
-ai_assist/
-adapters/llm/
-research/
-research_specs/
 requirements-gui.txt
+scripts/run_gui_launcher.py
+docs/dev/gui-launcher-spec.md
+docs/user/15-gui-launcher.md
 
 # Local-only builder config artifacts (keep local)
 config/advanced_builder_defaults.py
@@ -104,25 +102,13 @@ config/data_splits.yml
 
 # Local-only docs/specs (keep local)
 docs/dev/advanced-builder-market-aware-defaults.md
-docs/dev/gui-launcher-spec.md
-docs/user/15-gui-launcher.md
 
 # Local-only experimental tests (keep local)
 tests/test_advanced_builder_defaults.py
-tests/test_ai_assist_controlled_english.py
-tests/test_research_dsl.py
-tests/test_research_nl_parser.py
-tests/test_research_stop_types_backtest_smoke.py
-tests/test_research_trade_management.py
 
-# Local strategy generation / tuning helpers (keep local)
-scripts/run_gui_launcher.py
-scripts/build_strategy_from_english.py
-scripts/build_strategy_from_notes_ai.py
-scripts/build_strategy_from_spec.py
+# Local-only strategy experiments (keep local)
+research_specs/
 scripts/tune_donchian_breakout.py
-
-# Example / WIP strategies (keep local)
 strategies/donchian_breakout/
 strategies/pin_bar/
 strategies/research_ema_cross/

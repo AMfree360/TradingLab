@@ -87,6 +87,27 @@ validation_state/
 # Local experiment registry / scratch
 .experiments/
 
+# Local GUI / strategy / AI work (keep local; don't commit)
+gui_launcher/
+ai/
+ai_assist/
+adapters/llm/
+research/
+research_specs/
+requirements-gui.txt
+
+# Local strategy generation / tuning helpers (keep local)
+scripts/run_gui_launcher.py
+scripts/build_strategy_from_english.py
+scripts/build_strategy_from_notes_ai.py
+scripts/build_strategy_from_spec.py
+scripts/tune_donchian_breakout.py
+
+# Example / WIP strategies (keep local)
+strategies/donchian_breakout/
+strategies/pin_bar/
+strategies/research_ema_cross/
+
 # Exclude local virtualenvs (ensure no venv accidentally committed)
 .venv/
 venv/

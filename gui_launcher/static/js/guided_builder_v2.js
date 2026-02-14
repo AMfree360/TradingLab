@@ -83,34 +83,34 @@
       op.value = (rule && rule.op) ? rule.op : '>=';
       const thr = el('input', { type: 'number', class: 'param', 'data-key': 'threshold', step: 0.01, min: 0, value: (rule && rule.threshold) ? String(rule.threshold) : '1.0' });
 
-      container.appendChild(el('label', { text: 'MA type: ' })); container.appendChild(maType);
-      container.appendChild(el('label', { text: ' MA length: ' })); container.appendChild(len);
-      container.appendChild(el('label', { text: ' Op: ' })); container.appendChild(op);
-      container.appendChild(el('label', { text: ' Threshold: ' })); container.appendChild(thr);
+      const l1 = el('label'); l1.appendChild(document.createTextNode('MA type: ')); l1.appendChild(maType); container.appendChild(l1);
+      const l2 = el('label'); l2.appendChild(document.createTextNode(' MA length: ')); l2.appendChild(len); container.appendChild(l2);
+      const l3 = el('label'); l3.appendChild(document.createTextNode(' Op: ')); l3.appendChild(op); container.appendChild(l3);
+      const l4 = el('label'); l4.appendChild(document.createTextNode(' Threshold: ')); l4.appendChild(thr); container.appendChild(l4);
       return;
     }
 
     if (type === 'ma_cross' || type === 'ma_cross_state') {
       const fast = el('input', { type: 'number', class: 'param', 'data-key': 'fast', min: 1, value: (rule && rule.fast) ? String(rule.fast) : '8' });
       const slow = el('input', { type: 'number', class: 'param', 'data-key': 'slow', min: 1, value: (rule && rule.slow) ? String(rule.slow) : '21' });
-      container.appendChild(el('label', { text: 'Fast: ' })); container.appendChild(fast);
-      container.appendChild(el('label', { text: ' Slow: ' })); container.appendChild(slow);
+      const lf = el('label'); lf.appendChild(document.createTextNode('Fast: ')); lf.appendChild(fast); container.appendChild(lf);
+      const ls = el('label'); ls.appendChild(document.createTextNode(' Slow: ')); ls.appendChild(slow); container.appendChild(ls);
       return;
     }
 
     if (type === 'rsi_threshold') {
       const len = el('input', { type: 'number', class: 'param', 'data-key': 'length', min: 1, value: (rule && rule.length) ? String(rule.length) : '14' });
       const thr = el('input', { type: 'number', class: 'param', 'data-key': 'threshold', min: 0, max: 100, value: (rule && rule.threshold) ? String(rule.threshold) : '70' });
-      container.appendChild(el('label', { text: 'Length: ' })); container.appendChild(len);
-      container.appendChild(el('label', { text: ' Threshold: ' })); container.appendChild(thr);
+      const llen = el('label'); llen.appendChild(document.createTextNode('Length: ')); llen.appendChild(len); container.appendChild(llen);
+      const lthr = el('label'); lthr.appendChild(document.createTextNode(' Threshold: ')); lthr.appendChild(thr); container.appendChild(lthr);
       return;
     }
 
     if (type === 'atr_pct') {
       const len = el('input', { type: 'number', class: 'param', 'data-key': 'length', min: 1, value: (rule && rule.length) ? String(rule.length) : '14' });
       const pct = el('input', { type: 'number', class: 'param', 'data-key': 'pct', step: 0.01, min: 0, value: (rule && rule.pct) ? String(rule.pct) : '1.0' });
-      container.appendChild(el('label', { text: 'Length: ' })); container.appendChild(len);
-      container.appendChild(el('label', { text: ' %: ' })); container.appendChild(pct);
+      const llen2 = el('label'); llen2.appendChild(document.createTextNode('Length: ')); llen2.appendChild(len); container.appendChild(llen2);
+      const lpct = el('label'); lpct.appendChild(document.createTextNode(' %: ')); lpct.appendChild(pct); container.appendChild(lpct);
       return;
     }
 
@@ -691,33 +691,39 @@
         }
 
         function inputNumber(parent, label, field, value, opts) {
-          parent.appendChild(el('label', { text: label }));
+          const wrap = el('label');
+          wrap.appendChild(document.createTextNode(label));
           const inp = el('input');
           inp.type = 'number';
           inp.setAttribute('data-field', field);
           if (opts && typeof opts.min !== 'undefined') inp.min = String(opts.min);
           if (opts && typeof opts.step !== 'undefined') inp.step = String(opts.step);
           inp.value = value != null ? String(value) : '';
-          parent.appendChild(inp);
+          wrap.appendChild(inp);
+          parent.appendChild(wrap);
         }
 
         function inputText(parent, label, field, value, placeholder) {
-          parent.appendChild(el('label', { text: label }));
+          const wrap = el('label');
+          wrap.appendChild(document.createTextNode(label));
           const inp = el('input');
           inp.type = 'text';
           inp.setAttribute('data-field', field);
           if (placeholder) inp.placeholder = placeholder;
           inp.value = value != null ? String(value) : '';
-          parent.appendChild(inp);
+          wrap.appendChild(inp);
+          parent.appendChild(wrap);
         }
 
         function inputTextArea(parent, label, field, value, placeholder) {
-          parent.appendChild(el('label', { text: label }));
+          const wrap = el('label');
+          wrap.appendChild(document.createTextNode(label));
           const ta = el('textarea', { rows: '2' });
           ta.setAttribute('data-field', field);
           if (placeholder) ta.placeholder = placeholder;
           ta.value = value != null ? String(value) : '';
-          parent.appendChild(ta);
+          wrap.appendChild(ta);
+          parent.appendChild(wrap);
         }
 
         function inputCheckbox(parent, label, field, checked) {
@@ -732,7 +738,8 @@
         }
 
         function select(parent, label, field, options, value) {
-          parent.appendChild(el('label', { text: label }));
+          const wrap = el('label');
+          wrap.appendChild(document.createTextNode(label));
           const sel = el('select');
           sel.setAttribute('data-field', field);
           for (const opt of options) {
@@ -742,7 +749,8 @@
             sel.appendChild(o);
           }
           if (value != null) sel.value = value;
-          parent.appendChild(sel);
+          wrap.appendChild(sel);
+          parent.appendChild(wrap);
         }
           block('ma_cross_state', (b) => {
             select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], rule?.ma_type || 'ema');

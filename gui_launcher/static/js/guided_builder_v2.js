@@ -404,7 +404,6 @@
         //     b.appendChild(el('div', { class: 'muted', html: 'True if volume is at least min % above the MA.' }));
         //   });
         // }
-        }
 
         // Initialize row UI (set selected type, show param block, wire inputs)
         (function initRow() {

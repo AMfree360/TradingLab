@@ -1,3 +1,211 @@
+/* Guided Builder v2 — Clean rewrite (Phase 4 starter)
+   Self-contained module: reads the Step 4 form, renders simple rule rows,
+   two-way syncs hidden JSON inputs: context_rules_json, signal_rules_json,
+   trigger_rules_json. Keeps implementation minimal and robust for iterative
+   expansion (per-type parameter blocks come next).
+*/
+(function () {
+  const contextTypes = [
+    ['price_vs_ma', 'Trend: Price vs MA'],
+    ['ma_cross_state', 'Trend: MA state (fast vs slow)'],
+    ['atr_pct', 'Volatility: ATR% filter'],
+    ['structure_breakout_state', 'Structure: Breakout state'],
+    ['ma_spread_pct', 'Trend strength: MA spread %'],
+    ['custom', 'Custom (DSL)']
+  ];
+
+  const signalTypes = [
+    ['ma_cross', 'MA cross (fast vs slow)'],
+    ['rsi_threshold', 'RSI threshold'],
+    ['rsi_cross_back', 'RSI cross back'],
+    ['donchian_breakout', 'Donchian breakout/breakdown'],
+    ['new_high_low_breakout', 'New high/low breakout'],
+    ['pullback_to_ma', 'Pullback to MA'],
+    ['custom', 'Custom (DSL)']
+  ];
+
+  const triggerTypes = [
+    ['pin_bar', 'Pin bar'],
+    ['inside_bar_breakout', 'Inside bar breakout'],
+    ['engulfing', 'Engulfing'],
+    ['ma_reclaim', 'MA reclaim'],
+    ['prior_bar_break', 'Break prior bar high/low'],
+    ['donchian_breakout', 'Donchian breakout/breakdown'],
+    ['range_breakout', 'Range breakout'],
+    ['wide_range_candle', 'Wide-range candle (vs ATR)'],
+    ['custom', 'Custom (DSL)']
+  ];
+
+  function el(tag, attrs) {
+    const node = document.createElement(tag);
+    if (!attrs) return node;
+    for (const k of Object.keys(attrs)) {
+      if (k === 'text') node.textContent = attrs[k];
+      else if (k === 'html') node.innerHTML = attrs[k];
+      else if (k === 'class') node.className = attrs[k];
+      else node.setAttribute(k, String(attrs[k]));
+    }
+    return node;
+  }
+
+  function ensureHidden(form, id) {
+    let elHidden = form.querySelector('#' + id);
+    if (!elHidden) {
+      elHidden = el('input', { type: 'hidden', id: id, name: id });
+      elHidden.value = '[]';
+      form.appendChild(elHidden);
+    }
+    return elHidden;
+  }
+
+  function parseJsonSafe(txt) {
+    try { const p = JSON.parse(String(txt || '[]')); return Array.isArray(p) ? p : []; } catch (e) { return []; }
+  }
+
+  function serializeRules(container) {
+    const out = [];
+    if (!container) return out;
+    const rows = Array.from(container.querySelectorAll('.rule-row'));
+    for (const r of rows) {
+      const type = (r.querySelector('.rule-type') || {}).value || '';
+      if (!type) continue;
+      const rule = { type: String(type) };
+      const tfEl = r.querySelector('.rule-tf');
+      if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = String(tfEl.value);
+      const validEl = r.querySelector('.rule-valid');
+      if (validEl && validEl.value !== '') {
+        const n = Number(validEl.value);
+        if (Number.isFinite(n)) rule.valid_for_bars = n;
+      }
+      const customEl = r.querySelector('.rule-custom');
+      if (customEl && customEl.value && customEl.value.trim() !== '') rule.custom = customEl.value.trim();
+      out.push(rule);
+    }
+    return out;
+  }
+
+  function syncHidden(form, ctxContainer, sigContainer, trgContainer) {
+    try {
+      const ctxHidden = ensureHidden(form, 'context_rules_json');
+      const sigHidden = ensureHidden(form, 'signal_rules_json');
+      const trgHidden = ensureHidden(form, 'trigger_rules_json');
+      ctxHidden.value = JSON.stringify(serializeRules(ctxContainer));
+      sigHidden.value = JSON.stringify(serializeRules(sigContainer));
+      trgHidden.value = JSON.stringify(serializeRules(trgContainer));
+    } catch (e) { console.error('syncHidden error', e); }
+  }
+
+  function createRuleRow(section, rule) {
+    const row = el('div', { class: 'rule-row' });
+    const left = el('div', { class: 'rule-left' });
+    const right = el('div', { class: 'rule-right' });
+
+    // type select
+    const sel = el('select', { class: 'rule-type', name: `type` });
+    const types = section === 'context' ? contextTypes : (section === 'signal' ? signalTypes : triggerTypes);
+    for (const [v, label] of types) {
+      const o = el('option', { value: v }); o.textContent = label; sel.appendChild(o);
+    }
+    if (rule && rule.type) sel.value = rule.type;
+
+    left.appendChild(sel);
+
+    // TF select for signal/trigger
+    if (section === 'signal' || section === 'trigger') {
+      const tf = el('select', { class: 'rule-tf', name: 'tf' });
+      tf.appendChild(el('option', { value: 'default', text: 'default' }));
+      tf.appendChild(el('option', { value: '1m', text: '1m' }));
+      tf.appendChild(el('option', { value: '5m', text: '5m' }));
+      tf.appendChild(el('option', { value: '15m', text: '15m' }));
+      if (rule && rule.tf) tf.value = rule.tf;
+      left.appendChild(tf);
+    }
+
+    // valid_for_bars
+    const valid = el('input', { type: 'number', class: 'rule-valid', name: 'valid_for_bars', min: 1, value: (rule && rule.valid_for_bars) ? String(rule.valid_for_bars) : '' });
+    left.appendChild(valid);
+
+    // parameter area (simple custom DSL textarea for now)
+    const ta = el('textarea', { class: 'rule-custom', name: 'custom', rows: 2 });
+    if (rule && rule.custom) ta.value = rule.custom;
+    right.appendChild(ta);
+
+    // remove button
+    const remove = el('button', { type: 'button', class: 'rule-remove' }); remove.textContent = 'Remove';
+    right.appendChild(remove);
+
+    row.appendChild(left); row.appendChild(right);
+
+    return row;
+  }
+
+  function renderRules(container, rules, section) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!Array.isArray(rules) || rules.length === 0) return;
+    for (const r of rules) {
+      const row = createRuleRow(section, r);
+      container.appendChild(row);
+    }
+  }
+
+  function wire(container, form, ctxContainer, sigContainer, trgContainer) {
+    // delegate events
+    container.addEventListener('input', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
+    container.addEventListener('change', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
+    container.addEventListener('click', (ev) => {
+      if (!ev.target) return;
+      if (ev.target.classList && ev.target.classList.contains('rule-remove')) {
+        const row = ev.target.closest('.rule-row'); if (row) { row.remove(); syncHidden(form, ctxContainer, sigContainer, trgContainer); }
+      }
+    });
+  }
+
+  function init() {
+    const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
+    if (!form) return;
+
+    const ctxContainer = document.getElementById('context-rules');
+    const sigContainer = document.getElementById('signal-rules');
+    const trgContainer = document.getElementById('trigger-rules');
+
+    const ctxHidden = ensureHidden(form, 'context_rules_json');
+    const sigHidden = ensureHidden(form, 'signal_rules_json');
+    const trgHidden = ensureHidden(form, 'trigger_rules_json');
+
+    // load initial rules from hidden inputs
+    const ctx = parseJsonSafe(ctxHidden.value);
+    const sig = parseJsonSafe(sigHidden.value);
+    const trg = parseJsonSafe(trgHidden.value);
+
+    renderRules(ctxContainer, ctx, 'context');
+    renderRules(sigContainer, sig, 'signal');
+    renderRules(trgContainer, trg, 'trigger');
+
+    // wire add buttons
+    const addCtx = document.getElementById('add-context');
+    const addSig = document.getElementById('add-signal');
+    const addTrg = document.getElementById('add-trigger');
+
+    if (addCtx && ctxContainer) addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+    if (addSig && sigContainer) addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+    if (addTrg && trgContainer) addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+
+    // delegate wiring for edits/removes
+    wire(ctxContainer || document, form, ctxContainer, sigContainer, trgContainer);
+    wire(sigContainer || document, form, ctxContainer, sigContainer, trgContainer);
+    wire(trgContainer || document, form, ctxContainer, sigContainer, trgContainer);
+
+    // ensure we sync initially
+    syncHidden(form, ctxContainer, sigContainer, trgContainer);
+
+    // on submit, make sure hidden inputs reflect current state
+    form.addEventListener('submit', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+
+})();
 /* Guided Builder v2 — Modular entrypoint (clean rewrite start)
    This file replaces the previous monolithic script. It bootstraps the smaller
    modules added in the rewrite: model, state, and DOM bindings. Full rule-row

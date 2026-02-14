@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Guided Builder v2 - Harness</title>
+    <script src="/static/js/guided_builder_v2.js"></script>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 16px; }
+      .muted { color: #666; }
+    </style>
+  </head>
+  <body>
+    <h1>Guided Builder v2 - Local Harness</h1>
+    <p class="muted">Minimal harness for local testing of guided_builder_v2.js (no server-side previews).</p>
+
+    <form id="guided_step4_form" action="/create-strategy-guided/step4" method="post">
+      <input type="hidden" name="context_rules_json" id="context_rules_json" value='[]' />
+      <input type="hidden" name="signal_rules_json" id="signal_rules_json" value='[]' />
+      <input type="hidden" name="trigger_rules_json" id="trigger_rules_json" value='[]' />
+
+      <label>Entry timeframe
+        <select name="entry_tf">
+          <option value="1h">1h</option>
+          <option value="15m">15m</option>
+        </select>
+      </label>
+
+      <div id="context-rules"></div>
+      <button type="button" id="add-context">Add context</button>
+      <div id="signal-rules"></div>
+      <button type="button" id="add-signal">Add signal</button>
+      <div id="trigger-rules"></div>
+      <button type="button" id="add-trigger">Add trigger</button>
+
+      <div id="effective-preview-body" style="margin-top:16px; border:1px solid #ddd; padding:8px; min-height:80px;"></div>
+
+      <button type="submit">Submit</button>
+    </form>
+
+    <script>
+      // quick hint: open console to see logs
+      console.log('Harness loaded. FEATURE_FLAG:', (typeof FEATURE_FLAG !== 'undefined') ? FEATURE_FLAG : null);
+    </script>
+  </body>
+</html>

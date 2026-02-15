@@ -1,0 +1,70 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  frontend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (for running the local app)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Create venv & install Python deps
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Run frontend unit tests (Jest)
+        run: npm test --silent
+
+      - name: Start app and wait
+        run: |
+          . .venv/bin/activate
+          nohup .venv/bin/uvicorn gui_launcher.app:app --host 127.0.0.1 --port 8000 &
+          n=0; until curl -sf http://127.0.0.1:8000/ || [ $n -ge 60 ]; do sleep 1; n=$((n+1)); done
+
+      - name: Run Cypress headless
+        run: |
+          # ensure Cypress binary is installed non-interactively and run specs
+          npx cypress install --yes
+          npx cypress run --spec "cypress/{e2e,integration}/**/*.js" --headless
+        env:
+          CYPRESS_baseUrl: 'http://127.0.0.1:8000'
+
+      - name: Upload Cypress videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: cypress/videos
+
+      - name: Upload Cypress screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots

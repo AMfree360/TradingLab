@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Create Strategy (Guided) — V2 One Page</h1>
+  <p class="muted">All Guided Builder V2 fields consolidated onto a single page for visual inspection. No V2 JS is loaded by default.</p>
+
+  <form class="card" method="post" action="/create-strategy-guided/step4" id="guided_onepage_form" novalidate>
+    <input type="hidden" name="template" value="builder_v2" />
+    <input type="hidden" name="draft_id" value="{{ draft_id or '' }}" />
+
+    <h2>Step 1 — Identity</h2>
+    <label>Strategy name</label>
+    <input name="name" type="text" value="{{ draft.name or '' }}" placeholder="e.g. rsi_breakout" required />
+
+    <hr />
+    <h2>Step 2 — Market</h2>
+    <label>Asset class</label>
+    <select id="asset_class" name="asset_class">
+      <option value="crypto" {% if (draft.asset_class or 'crypto') == 'crypto' %}selected{% endif %}>Crypto</option>
+      <option value="fx" {% if draft.asset_class == 'fx' %}selected{% endif %}>FX</option>
+      <option value="futures" {% if draft.asset_class == 'futures' %}selected{% endif %}>Futures</option>
+    </select>
+
+    <label>Exchange / venue</label>
+    <input id="exchange" name="exchange" type="text" value="{{ draft.exchange or 'binance' }}" />
+
+    <label>Market type</label>
+    <select id="market_type" name="market_type">
+      <option value="spot" {% if (draft.market_type or 'spot') == 'spot' %}selected{% endif %}>spot</option>
+      <option value="futures" {% if draft.market_type == 'futures' %}selected{% endif %}>futures</option>
+    </select>
+
+    <label>Instrument</label>
+    <select id="symbol" name="symbol"> 
+      {% for inst in instruments or [] %}
+        <option value="{{ inst.symbol }}" {% if inst.symbol == (draft.symbol or '') %}selected{% endif %}>{{ inst.symbol }}</option>
+      {% endfor %}
+    </select>
+
+    <hr />
+    <h2>Step 3 — Holding</h2>
+    <label>Holding style</label>
+    <select name="holding_style" id="holding_style">
+      <option value="intraday" {% if (draft.holding_style or 'intraday') == 'intraday' %}selected{% endif %}>Intraday (flat by time)</option>
+      <option value="swing" {% if draft.holding_style == 'swing' %}selected{% endif %}>Swing (hold overnight)</option>
+    </select>
+
+    <label>
+      <input type="checkbox" name="flatten_enabled" {% if draft.flatten_enabled %}checked{% endif %} />
+      Flatten all positions by time (UTC)
+    </label>
+
+    <hr />
+    <h2>Step 4 — Entries + Risk</h2>
+    <label>
+      <input type="checkbox" name="long_enabled" {% if draft.long_enabled %}checked{% endif %} />
+      Enable LONG
+    </label>
+    <label>
+      <input type="checkbox" name="short_enabled" {% if draft.short_enabled %}checked{% endif %} />
+      Enable SHORT
+    </label>
+
+    <h3>Stops (shared)</h3>
+    <label>Stop type</label>
+    <select name="stop_type" id="stop_type_shared">
+      <option value="atr" {% if (draft.stop_type or 'atr') == 'atr' %}selected{% endif %}>ATR</option>
+      <option value="percent" {% if draft.stop_type == 'percent' %}selected{% endif %}>Percent</option>
+      <option value="ma" {% if draft.stop_type == 'ma' %}selected{% endif %}>MA</option>
+      <option value="structure" {% if draft.stop_type == 'structure' %}selected{% endif %}>Structure</option>
+      <option value="candle" {% if draft.stop_type == 'candle' %}selected{% endif %}>Candle</option>
+    </select>
+
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-top:8px;">
+      <div>
+        <label>ATR length</label>
+        <input name="atr_length" type="number" min="1" value="{{ draft.atr_length or 14 }}" />
+      </div>
+      <div>
+        <label>ATR multiplier</label>
+        <input name="atr_multiplier" type="number" step="0.1" min="0.1" value="{{ draft.atr_multiplier or 3.0 }}" />
+      </div>
+      <div>
+        <label>Stop percent (fraction)</label>
+        <input name="stop_percent" type="number" step="0.001" min="0.0001" value="{{ draft.stop_percent or 0.02 }}" />
+      </div>
+    </div>
+
+    <hr />
+    <h3>Entries — LONG (Condition blocks)</h3>
+    <!-- Reuse the original form structure for condition blocks by keeping expected IDs -->
+    <div id="long-conditions">
+      <!-- Condition 1 -->
+      <div class="card">
+        <label>Condition 1 type</label>
+        <select name="long1_type" class="cond-type">
+          <option value="none">None</option>
+          <option value="rsi">RSI threshold</option>
+          <option value="ema_cross">EMA crossover</option>
+          <option value="close_vs_ma">Close vs MA</option>
+          <option value="donchian">Donchian breakout</option>
+        </select>
+        <label>Timeframe</label>
+        <select name="long1_tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select>
+        <div class="cond-fields" id="long1_rsi">
+          <label>RSI length</label>
+          <input name="long1_rsi_len" type="number" min="1" value="14" />
+          <label>Level</label>
+          <input name="long1_level" type="number" step="0.1" />
+        </div>
+      </div>
+      <!-- Condition 2 -->
+      <div class="card">
+        <label>Condition 2 type</label>
+        <select name="long2_type" class="cond-type">
+          <option value="none">None</option>
+          <option value="rsi">RSI threshold</option>
+          <option value="ema_cross">EMA crossover</option>
+          <option value="close_vs_ma">Close vs MA</option>
+          <option value="donchian">Donchian breakout</option>
+        </select>
+        <label>Timeframe</label>
+        <select name="long2_tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select>
+      </div>
+    </div>
+
+    <hr />
+    <h3>Entries — SHORT (Condition blocks)</h3>
+    <div id="short-conditions">
+      <div class="card">
+        <label>Condition 1 type</label>
+        <select name="short1_type" class="cond-type">
+          <option value="none">None</option>
+          <option value="rsi">RSI threshold</option>
+          <option value="ema_cross">EMA crossover</option>
+          <option value="close_vs_ma">Close vs MA</option>
+          <option value="donchian">Donchian breakout</option>
+        </select>
+        <label>Timeframe</label>
+        <select name="short1_tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select>
+      </div>
+      <div class="card">
+        <label>Condition 2 type</label>
+        <select name="short2_type" class="cond-type">
+          <option value="none">None</option>
+          <option value="rsi">RSI threshold</option>
+          <option value="ema_cross">EMA crossover</option>
+          <option value="close_vs_ma">Close vs MA</option>
+          <option value="donchian">Donchian breakout</option>
+        </select>
+        <label>Timeframe</label>
+        <select name="short2_tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select>
+      </div>
+    </div>
+
+    <hr />
+    <h2>Step 5 — Advanced / Risk & Sizing</h2>
+    <label>Sizing mode</label>
+    <select name="sizing_mode">
+      <option value="account_size">Fixed (account size)</option>
+      <option value="daily_equity">Compounded daily</option>
+      <option value="equity">Compounded every trade</option>
+    </select>
+    <label>Account size ($)</label>
+    <input name="account_size" type="number" step="100" min="1" value="{{ draft.account_size or 10000 }}" />
+
+    <label>Max trades per day</label>
+    <input name="max_trades_per_day" type="number" min="0" value="{{ draft.max_trades_per_day or 1 }}" />
+
+    <label>
+      <input id="max_daily_loss_enabled" type="checkbox" name="max_daily_loss_enabled" value="1" />
+      Enforce max daily loss
+    </label>
+    <label>Max daily loss (%)</label>
+    <input id="max_daily_loss_pct" name="max_daily_loss_pct" type="number" step="0.1" min="0" value="3.0" />
+
+    <hr />
+    <div style="display:flex; gap:10px; margin-top:12px;">
+      <button class="primary" type="submit">Create / Review</button>
+      <a class="muted" href="/builder-v3">Back to Builder V3</a>
+    </div>
+  </form>
+
+{% endblock %}

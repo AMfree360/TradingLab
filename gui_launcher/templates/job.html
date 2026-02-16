@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Running…</h1>
+  <div class="card">
+    <p>This may take a moment.</p>
+    <p><a href="/job/{{ job_id }}">Refresh status</a></p>
+  </div>
+
+  <div id="jobData" data-job-id="{{ job_id }}" style="display:none;"></div>
+  <script src="/static/js/job.js"></script>
+{% endblock %}

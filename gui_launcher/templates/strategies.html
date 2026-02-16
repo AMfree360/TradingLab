@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Strategies</h1>
+
+  {% if message %}
+    <div class="card" style="border-left: 4px solid #666;">
+      <div class="muted"><strong>{{ message }}</strong></div>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="muted">
+      Generated strategies live as editable specs in <code>research_specs/</code>.
+      Manual strategies live in <code>strategies/</code>.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Specs (editable)</h2>
+
+    {% if spec_total_pages and spec_total_pages > 1 %}
+      <div class="muted" style="margin-bottom: 10px;">
+        Showing page {{ spec_page }} / {{ spec_total_pages }} ({{ spec_total }} total)
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom: 10px;">
+        {% if spec_page > 1 %}
+          <a class="button" href="/strategies?page={{ spec_page - 1 }}&per_page={{ spec_per_page }}">Prev</a>
+        {% endif %}
+        {% if spec_page < spec_total_pages %}
+          <a class="button" href="/strategies?page={{ spec_page + 1 }}&per_page={{ spec_per_page }}">Next</a>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <ul>
+      {% for s in spec_strategies %}
+        <li>
+          <a href="/strategies/spec/{{ s.name }}">{{ s.name }}</a>
+          {% if s.has_v2_guided_meta %}
+            <a class="button" href="/strategies/spec/{{ s.name }}/edit-guided">Edit (Builder v2)</a>
+          {% endif %}
+          <a class="button" href="/strategies/spec/{{ s.name }}/form">Edit (advanced)</a>
+          <a class="button button-danger" href="/strategies/spec/{{ s.name }}/delete">Delete…</a>
+          <span class="muted">· {{ s.path }}</span>
+        </li>
+      {% else %}
+        <li>No strategy specs found in <code>research_specs/</code>.</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Code strategies</h2>
+    <ul>
+      {% for s in code_strategies %}
+        <li>
+          <span>{{ s.name }}</span>
+          <a class="button" href="/backtest?strategy={{ s.name }}">Backtest</a>
+          <span class="muted">· {{ s.path }}</span>
+        </li>
+      {% else %}
+        <li>No code strategies found in <code>strategies/</code>.</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endblock %}

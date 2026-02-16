@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="hero">
+    <h1>TradingLab Launcher</h1>
+    <p>Big buttons that run the same TradingLab commands.</p>
+  </div>
+
+  <div class="grid">
+    <a class="card button" href="/strategies">
+      <h2>Strategies</h2>
+      <p>Browse specs → edit params → recompile → rerun.</p>
+    </a>
+
+    <a class="card button" href="/help">
+      <h2>Help</h2>
+      <p>Golden path workflow + common pitfalls.</p>
+    </a>
+
+    <a class="card button" href="/create-strategy-guided">
+      <h2>Create Strategy (Guided)</h2>
+      <p>Pick a template → pick a market → build entries with guardrails.</p>
+    </a>
+
+    <a class="card button" href="/builder-v3">
+      <h2>Builder V3</h2>
+      <p>Single-page guided builder (V3 SPA). Preview, validate, and save strategies.</p>
+    </a>
+
+    <a class="card button" href="/builder-v3/v3-onepage">
+      <h2>Guided Builder — One Page (V3)</h2>
+      <p>One-page consolidation of Guided Builder fields for visual inspection (HTML-only).</p>
+    </a>
+
+    <a class="card button" href="/create-strategy-english">
+      <h2>Create Strategy (English)</h2>
+      <p>Paste English rules → answer clarifications → compile.</p>
+    </a>
+
+    <a class="card button" href="/backtest">
+      <h2>Backtest</h2>
+      <p>Run a strategy on a dataset → open the HTML report.</p>
+    </a>
+
+    <a class="card button" href="/runs">
+      <h2>Runs</h2>
+      <p>Open past run bundles (commands + logs).</p>
+    </a>
+  </div>
+{% endblock %}

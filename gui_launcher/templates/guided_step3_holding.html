@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Step 3 — Holding style</h2>
+
+  <form class="card" method="post" action="/create-strategy-guided/step3">
+    <input type="hidden" name="draft_id" value="{{ draft_id }}" />
+
+    <label>Holding style</label>
+    {% set hs = draft.holding_style or 'intraday' %}
+    <select name="holding_style" id="holding_style">
+      <option value="intraday" {% if hs == 'intraday' %}selected{% endif %}>Intraday (flat by time)</option>
+      <option value="swing" {% if hs == 'swing' %}selected{% endif %}>Swing (hold overnight)</option>
+    </select>
+
+    <div class="muted">
+      Intraday uses end-of-day flattening and intraday margin (for futures). Swing disables flattening and uses overnight/initial margin (for futures).
+    </div>
+
+    <hr />
+
+    <div id="flatten_block">
+      <label>
+        <input type="checkbox" name="flatten_enabled" {% if draft.flatten_enabled %}checked{% endif %} />
+        Flatten all positions by time (UTC)
+      </label>
+
+      <label>Flatten time (UTC, HH:MM)</label>
+      <input name="flatten_time" type="text" value="{{ draft.flatten_time or '21:30' }}" placeholder="21:30" />
+
+      <label>Stop searching for signals minutes before flatten (optional)</label>
+      <input name="stop_signal_search_minutes_before" type="number" min="0" value="{{ draft.stop_signal_search_minutes_before if draft.stop_signal_search_minutes_before is not none else '' }}" placeholder="e.g. 30" />
+    </div>
+
+    {% if (draft.asset_class or '') == 'futures' or (draft.market_type or '') == 'futures' %}
+      <div id="margin_block" style="margin-top: 10px;">
+        <label>
+          <input type="checkbox" name="use_intraday_margin" {% if draft.use_intraday_margin %}checked{% endif %} />
+          Futures: use intraday margin (unchecked = overnight/initial margin)
+        </label>
+        <div class="muted">This affects position affordability checks and margin used; P&L still uses contract specs (tick/point value).</div>
+      </div>
+    {% endif %}
+
+    <button class="primary" type="submit">Next</button>
+  </form>
+
+  <script src="/static/js/guided_step3_holding.js"></script>
+{% endblock %}

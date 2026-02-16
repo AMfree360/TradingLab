@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Help</h1>
+
+  <div class="card">
+    <h2>Golden path (no code)</h2>
+    <ol>
+      <li>Create a strategy (Guided or English)</li>
+      <li>Open <a href="/strategies">Strategies</a> → edit spec YAML → Save + compile</li>
+      <li>Run a backtest from <a href="/backtest">Backtest</a></li>
+      <li>Inspect results in <a href="/runs">Runs</a> (logs + report links)</li>
+      <li>Use “Rerun (same settings)” on a run to iterate fast</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Run the GUI (local)</h2>
+    <pre>./.venv/bin/python -m pip install -r requirements-gui.txt
+./.venv/bin/python scripts/run_gui_launcher.py --host 127.0.0.1 --port 8000</pre>
+    <div class="muted">Artifacts (inputs/command/stdout/stderr) are stored in <code>data/logs/gui_runs/</code>.</div>
+  </div>
+
+  <div class="card">
+    <h2>Common pitfalls</h2>
+    <ul>
+      <li><strong>Split policy conflicts</strong>: if you provide custom <code>--data</code>/<code>start/end</code>, use split policy mode <code>none</code> or enable override.</li>
+      <li><strong>Empty or weird backtests</strong>: check the run’s Stdout/Stderr in <a href="/runs">Runs</a> and confirm your dataset date range matches the UI inputs.</li>
+      <li><strong>Spec edits not reflected</strong>: after editing a spec, click “Save + compile”, then rerun the backtest.</li>
+      <li><strong>Reporting a bug</strong>: open the run detail page and click “Export bug report (zip)”.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Docs (repo)</h2>
+    <div class="muted">
+      See <code>RUNBOOK.md</code> and <code>docs/user/</code> for the full workflow.
+      This project is documentation-driven; there is no interactive support.
+    </div>
+  </div>
+{% endblock %}

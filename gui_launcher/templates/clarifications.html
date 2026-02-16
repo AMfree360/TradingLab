@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Clarifications</h1>
+
+  {% if warnings %}
+    <div class="card">
+      <h2>Warnings</h2>
+      <ul>
+        {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form class="card" method="post" action="/create-strategy-english/clarifications">
+    <input type="hidden" name="draft_id" value="{{ draft_id }}" />
+
+    {% for c in clarifications %}
+      <div class="q">
+        <div class="qtitle">{{ c.key }}</div>
+        <div class="qtext">{{ c.question }}</div>
+
+        {% if c.options %}
+          <select name="ans::{{ c.key }}">
+            {% for opt in c.options %}
+              <option value="{{ opt }}" {% if c.default and opt == c.default %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        {% else %}
+          <input name="ans::{{ c.key }}" type="text" value="{{ c.default or '' }}" />
+        {% endif %}
+
+        {% if c.default %}
+          <div class="muted">Default: {{ c.default }}</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+
+    <button class="primary" type="submit">Run</button>
+  </form>
+{% endblock %}

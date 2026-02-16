@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Step 2 — Market</h2>
+
+  <form class="card" method="post" action="/create-strategy-guided/step2">
+    <input type="hidden" name="draft_id" value="{{ draft_id }}" />
+
+    <label>Asset class</label>
+    <select id="asset_class" name="asset_class">
+      <option value="crypto" {% if (draft.asset_class or 'crypto') == 'crypto' %}selected{% endif %}>Crypto</option>
+      <option value="fx" {% if draft.asset_class == 'fx' %}selected{% endif %}>FX</option>
+      <option value="futures" {% if draft.asset_class == 'futures' %}selected{% endif %}>Futures</option>
+    </select>
+
+    <label>Exchange / venue</label>
+    <input id="exchange" name="exchange" type="text" value="{{ draft.exchange or 'binance' }}" />
+
+    <label>Market type</label>
+    <select id="market_type" name="market_type">
+      <option value="spot" {% if (draft.market_type or 'spot') == 'spot' %}selected{% endif %}>spot</option>
+      <option value="futures" {% if draft.market_type == 'futures' %}selected{% endif %}>futures</option>
+    </select>
+    <div class="muted" id="market_type_hint">For FX/futures this is fixed; crypto can be spot or futures.</div>
+
+    <label>Instrument</label>
+    <select id="symbol" name="symbol"></select>
+    <div class="muted">Pick from a safe list (or choose Custom and type it next step).</div>
+
+    <button class="primary" type="submit">Next</button>
+  </form>
+
+  <script type="application/json" id="guided-step2-data">{ "instruments": {{ instruments | tojson }}, "initialSymbol": {{ (draft.symbol or '') | tojson }} }</script>
+  <script src="/static/js/guided_step2.js"></script>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Delete run: {{ run_name }}</h1>
+
+  {% if message %}
+    <div class="card" style="border-left: 4px solid #666;">
+      <div class="muted"><strong>{{ message }}</strong></div>
+    </div>
+  {% endif %}
+
+  <div class="card" style="border-left: 4px solid #b42318;">
+    <div class="muted">This deletes the GUI run bundle directory:</div>
+    <div style="margin-top: 8px;"><code>{{ run_dir }}</code></div>
+    <div class="muted" style="margin-top: 10px;">This cannot be undone.</div>
+
+    <form method="post" action="/runs/{{ run_name }}/delete" style="margin-top: 14px;">
+      <label>Type the run name to confirm</label>
+      <input name="confirm_name" type="text" placeholder="{{ run_name }}" required />
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 12px;">
+        <button type="submit" class="button button-danger">Delete run</button>
+        <a class="button" href="/runs/{{ run_name }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

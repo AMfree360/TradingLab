@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Step 4 — Entries + Risk</h2>
+
+  <form class="card" id="guided_step4_form" method="post" action="/create-strategy-guided/step4" novalidate>
+    <input type="hidden" name="draft_id" value="{{ draft_id }}" />
+
+    <!-- Errors shown near the submit button (see bottom of form) -->
+
+    {% if not draft.symbol %}
+      <label>Instrument (custom)</label>
+      <input name="symbol" type="text" placeholder="e.g. BTCUSDT" required />
+    {% else %}
+      <input type="hidden" name="symbol" value="{{ draft.symbol }}" />
+    {% endif %}
+
+    <label>
+      <input type="checkbox" name="long_enabled" {% if draft.long_enabled %}checked{% endif %} />
+      Enable LONG
+    </label>
+
+    <label>
+      <input type="checkbox" name="short_enabled" {% if draft.short_enabled %}checked{% endif %} />
+      Enable SHORT
+    </label>
+
+    <hr />
+
+    <h3>Stops</h3>
+    <label>Stop type</label>
+    <select name="stop_type" id="stop_type">
+      <option value="atr" {% if (draft.stop_type or 'atr') == 'atr' %}selected{% endif %}>ATR</option>
+      <option value="percent" {% if draft.stop_type == 'percent' %}selected{% endif %}>Percent</option>
+    </select>
+
+    <div id="stop_atr">
+      <label>ATR length</label>
+      <input name="atr_length" type="number" min="1" value="{{ draft.atr_length or 14 }}" />
+      <label>ATR multiplier</label>
+      <input name="atr_multiplier" type="number" step="0.1" min="0.1" value="{{ draft.atr_multiplier or 3.0 }}" />
+    </div>
+
+    <div id="stop_percent">
+      <label>Stop percent (fraction)</label>
+      <input name="stop_percent" type="number" step="0.001" min="0.0001" value="{{ draft.stop_percent or 0.02 }}" />
+      <div class="muted">Example: <code>0.02</code> means 2%.</div>
+    </div>
+
+    <hr />
+
+    <h3>Entry conditions</h3>
+    <div class="muted">Add up to 2 conditions per side (AND). Condition 2 is optional.</div>
+
+    {% set entry_tf = draft.entry_tf or '1h' %}
+    {% set defaults = draft.defaults or {} %}
+
+    <h4>LONG</h4>
+    <label style="margin-top: 8px;">
+      <input type="checkbox" id="enable_long2" />
+      Add Condition 2 (optional)
+    </label>
+
+    {% for pref in ['long1','long2'] %}
+      {% set d = defaults.get(pref, {}) %}
+      <div class="card" id="{{ pref }}_card" style="margin-top: 12px; {% if pref == 'long2' and not d.get('type') %}display:none;{% endif %}">
+        <label>
+          {% if pref == 'long1' %}Condition 1{% else %}Condition 2{% endif %} type
+        </label>
+        <select name="{{ pref }}_type" class="cond-type" data-prefix="{{ pref }}">
+          <option value="none" {% if not d.get('type') %}selected{% endif %}>None</option>
+          <option value="rsi" {% if d.get('type') == 'rsi' %}selected{% endif %}>RSI threshold</option>
+          <option value="ema_cross" {% if d.get('type') == 'ema_cross' %}selected{% endif %}>EMA crossover</option>
+          <option value="close_vs_ma" {% if d.get('type') == 'close_vs_ma' %}selected{% endif %}>Close vs MA</option>
+          <option value="donchian" {% if d.get('type') == 'donchian' %}selected{% endif %}>Donchian breakout/breakdown</option>
+        </select>
+
+        <label>Timeframe</label>
+        <select name="{{ pref }}_tf">
+          <option value="5m" {% if entry_tf == '5m' %}selected{% endif %}>5m</option>
+          <option value="15m" {% if entry_tf == '15m' %}selected{% endif %}>15m</option>
+          <option value="1h" {% if entry_tf == '1h' %}selected{% endif %}>1h</option>
+          <option value="4h" {% if entry_tf == '4h' %}selected{% endif %}>4h</option>
+          <option value="1d" {% if entry_tf == '1d' %}selected{% endif %}>1d</option>
+        </select>
+
+        <div class="cond-fields" id="{{ pref }}_rsi">
+          <label>RSI length</label>
+          <input name="{{ pref }}_rsi_len" type="number" min="1" value="{{ d.get('rsi_len', 14) }}" />
+          <label>Operator</label>
+          <select name="{{ pref }}_op">
+            <option value="<" {% if d.get('op','<') == '<' %}selected{% endif %}>&lt;</option>
+            <option value=">" {% if d.get('op') == '>' %}selected{% endif %}>&gt;</option>
+            <option value="<=" {% if d.get('op') == '<=' %}selected{% endif %}>&lt;=</option>
+            <option value=">=" {% if d.get('op') == '>=' %}selected{% endif %}>&gt;=</option>
+          </select>
+          <label>Level</label>
+          <input name="{{ pref }}_level" type="number" step="0.1" value="{{ d.get('level','') }}" />
+        </div>
+
+        <div class="cond-fields" id="{{ pref }}_ema_cross">
+          <label>Fast EMA</label>
+          <input name="{{ pref }}_fast" type="number" min="1" value="{{ d.get('fast','') }}" />
+          <label>Slow EMA</label>
+          <input name="{{ pref }}_slow" type="number" min="1" value="{{ d.get('slow','') }}" />
+          <label>Direction</label>
+          <select name="{{ pref }}_direction">
+            <option value="above" {% if d.get('direction','above') in ['above','over'] %}selected{% endif %}>crosses above</option>
+            <option value="below" {% if d.get('direction') in ['below','under'] %}selected{% endif %}>crosses below</option>
+          </select>
+        </div>
+
+        <div class="cond-fields" id="{{ pref }}_close_vs_ma">
+          <label>MA</label>
+          <select name="{{ pref }}_ma">
+            <option value="ema" {% if d.get('ma','ema') == 'ema' %}selected{% endif %}>EMA</option>
+            <option value="sma" {% if d.get('ma') == 'sma' %}selected{% endif %}>SMA</option>
+          </select>
+          <label>MA length</label>
+          <input name="{{ pref }}_ma_len" type="number" min="1" value="{{ d.get('ma_len','') }}" />
+          <label>Operator</label>
+          <select name="{{ pref }}_op">
+            <option value=">" {% if d.get('op','>') == '>' %}selected{% endif %}>&gt;</option>
+            <option value="<" {% if d.get('op') == '<' %}selected{% endif %}>&lt;</option>
+            <option value=">=" {% if d.get('op') == '>=' %}selected{% endif %}>&gt;=</option>
+            <option value="<=" {% if d.get('op') == '<=' %}selected{% endif %}>&lt;=</option>
+          </select>
+        </div>
+
+        <div class="cond-fields" id="{{ pref }}_donchian">
+          <label>Length</label>
+          <input name="{{ pref }}_don_len" type="number" min="1" value="{{ d.get('don_len','') }}" />
+          <label>Direction</label>
+          <select name="{{ pref }}_direction">
+            <option value="breakout" {% if d.get('direction','breakout') in ['breakout','above','over'] %}selected{% endif %}>breakout (above high)</option>
+            <option value="breakdown" {% if d.get('direction') in ['breakdown','below','under'] %}selected{% endif %}>breakdown (below low)</option>
+          </select>
+        </div>
+      </div>
+    {% endfor %}
+
+    <h4>SHORT</h4>
+    <label style="margin-top: 8px;">
+      <input type="checkbox" id="enable_short2" />
+      Add Condition 2 (optional)
+    </label>
+
+    {% for pref in ['short1','short2'] %}
+      {% set d = defaults.get(pref, {}) %}
+      <div class="card" id="{{ pref }}_card" style="margin-top: 12px; {% if pref == 'short2' and not d.get('type') %}display:none;{% endif %}">
+        <label>
+          {% if pref == 'short1' %}Condition 1{% else %}Condition 2{% endif %} type
+        </label>
+        <select name="{{ pref }}_type" class="cond-type" data-prefix="{{ pref }}">
+          <option value="none" {% if not d.get('type') %}selected{% endif %}>None</option>
+          <option value="rsi" {% if d.get('type') == 'rsi' %}selected{% endif %}>RSI threshold</option>
+          <option value="ema_cross" {% if d.get('type') == 'ema_cross' %}selected{% endif %}>EMA crossover</option>
+          <option value="close_vs_ma" {% if d.get('type') == 'close_vs_ma' %}selected{% endif %}>Close vs MA</option>
+          <option value="donchian" {% if d.get('type') == 'donchian' %}selected{% endif %}>Donchian breakout/breakdown</option>
+        </select>
+
+        <label>Timeframe</label>
+        <select name="{{ pref }}_tf">
+          <option value="5m" {% if entry_tf == '5m' %}selected{% endif %}>5m</option>
+          <option value="15m" {% if entry_tf == '15m' %}selected{% endif %}>15m</option>
+          <option value="1h" {% if entry_tf == '1h' %}selected{% endif %}>1h</option>
+          <option value="4h" {% if entry_tf == '4h' %}selected{% endif %}>4h</option>
+          <option value="1d" {% if entry_tf == '1d' %}selected{% endif %}>1d</option>
+        </select>
+
+        <div class="cond-fields" id="{{ pref }}_rsi">
+          <label>RSI length</label>
+          <input name="{{ pref }}_rsi_len" type="number" min="1" value="{{ d.get('rsi_len', 14) }}" />
+          <label>Operator</label>
+          <select name="{{ pref }}_op">
+            <option value="<" {% if d.get('op') == '<' %}selected{% endif %}>&lt;</option>
+            <option value=">" {% if d.get('op','>') == '>' %}selected{% endif %}>&gt;</option>
+            <option value="<=" {% if d.get('op') == '<=' %}selected{% endif %}>&lt;=</option>
+            <option value=">=" {% if d.get('op') == '>=' %}selected{% endif %}>&gt;=</option>
+          </select>
+          <label>Level</label>
+          <input name="{{ pref }}_level" type="number" step="0.1" value="{{ d.get('level','') }}" />
+        </div>
+
+        <div class="cond-fields" id="{{ pref }}_ema_cross">
+          <label>Fast EMA</label>
+          <input name="{{ pref }}_fast" type="number" min="1" value="{{ d.get('fast','') }}" />
+          <label>Slow EMA</label>
+          <input name="{{ pref }}_slow" type="number" min="1" value="{{ d.get('slow','') }}" />
+          <label>Direction</label>
+          <select name="{{ pref }}_direction">
+            <option value="above" {% if d.get('direction') in ['above','over'] %}selected{% endif %}>crosses above</option>
+            <option value="below" {% if d.get('direction','below') in ['below','under'] %}selected{% endif %}>crosses below</option>
+          </select>
+        </div>
+
+        <div class="cond-fields" id="{{ pref }}_close_vs_ma">
+          <label>MA</label>
+          <select name="{{ pref }}_ma">
+            <option value="ema" {% if d.get('ma') == 'ema' %}selected{% endif %}>EMA</option>
+            <option value="sma" {% if d.get('ma','sma') == 'sma' %}selected{% endif %}>SMA</option>
+          </select>
+          <label>MA length</label>
+          <input name="{{ pref }}_ma_len" type="number" min="1" value="{{ d.get('ma_len','') }}" />
+          <label>Operator</label>
+          <select name="{{ pref }}_op">
+            <option value=">" {% if d.get('op') == '>' %}selected{% endif %}>&gt;</option>
+            <option value="<" {% if d.get('op','<') == '<' %}selected{% endif %}>&lt;</option>
+            <option value=">=" {% if d.get('op') == '>=' %}selected{% endif %}>&gt;=</option>
+            <option value="<=" {% if d.get('op') == '<=' %}selected{% endif %}>&lt;=</option>
+          </select>
+        </div>
+
+        <div class="cond-fields" id="{{ pref }}_donchian">
+          <label>Length</label>
+          <input name="{{ pref }}_don_len" type="number" min="1" value="{{ d.get('don_len','') }}" />
+          <label>Direction</label>
+          <select name="{{ pref }}_direction">
+            <option value="breakout" {% if d.get('direction') in ['breakout','above','over'] %}selected{% endif %}>breakout (above high)</option>
+            <option value="breakdown" {% if d.get('direction','breakdown') in ['breakdown','below','under'] %}selected{% endif %}>breakdown (below low)</option>
+          </select>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% if error %}
+      <div class="card card-error" id="inline_error" style="margin-top: 12px;">{{ error }}</div>
+    {% endif %}
+    <div class="card card-error" id="client_error" style="display:none; margin-top: 12px;"></div>
+
+    <div class="muted" id="submit_status" style="margin-top: 10px;">Status: ready</div>
+
+    <button class="primary" id="review_btn" type="submit" form="guided_step4_form">Review</button>
+  </form>
+
+  <script src="/static/js/guided_step3.js"></script>
+{% endblock %}

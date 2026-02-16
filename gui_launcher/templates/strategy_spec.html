@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Spec: {{ spec_name }}</h1>
+
+  <div class="card">
+    <div class="muted">Path: {{ spec_rel_path }}</div>
+    {% if message %}
+      <div class="muted" style="margin-top: 10px;"><strong>{{ message }}</strong></div>
+    {% endif %}
+
+    <div style="margin-top: 12px;">
+      <a class="button" href="/backtest?strategy={{ spec_name }}">Backtest</a>
+      {% if has_v2_guided_meta %}
+        <a class="button" href="/strategies/spec/{{ spec_name }}/edit-guided">Edit (Builder v2)</a>
+      {% endif %}
+      <a class="button" href="/strategies/spec/{{ spec_name }}/form">Edit (advanced)</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Edit YAML</h2>
+    <form method="post">
+      <label for="yaml_text">Spec YAML</label>
+      <textarea id="yaml_text" name="yaml_text" rows="26">{{ yaml_text }}</textarea>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 10px;">
+        <button type="submit" class="primary" name="action" value="save">Save</button>
+        <button type="submit" name="action" value="save_compile">Save + compile</button>
+      </div>
+    </form>
+
+    <div class="muted" style="margin-top: 10px;">
+      Save validates against <code>StrategySpec</code>. If you change <code>name</code>, the file will be renamed.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Compile only</h2>
+    <form method="post">
+      <button type="submit" name="action" value="compile">Compile from saved spec</button>
+    </form>
+  </div>
+
+  <div class="card" style="border-left: 4px solid #b42318;">
+    <h2 style="margin-top:0;">Danger zone</h2>
+    <div class="muted">
+      Deletes the spec in <code>research_specs/</code> and (by default) the compiled generated folder in <code>strategies/</code>.
+      Past runs/logs/reports are preserved.
+    </div>
+
+    <div style="margin-top: 12px;">
+      <a class="button button-danger" href="/strategies/spec/{{ spec_name }}/delete">Delete strategy…</a>
+    </div>
+  </div>
+{% endblock %}

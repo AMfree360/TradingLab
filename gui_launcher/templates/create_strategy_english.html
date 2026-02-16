@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Create Strategy (English)</h1>
+
+  <form class="card" method="post" action="/create-strategy-english/parse" enctype="multipart/form-data">
+    <label>Strategy name</label>
+    <input name="name" type="text" value="{{ name or '' }}" required />
+
+    <label>Default entry timeframe (optional)</label>
+    <input name="entry_tf" type="text" placeholder="e.g. 1h" value="{{ entry_tf or '' }}" />
+
+    <label>Parse mode</label>
+    <select name="parse_mode">
+      <option value="strict" {% if (parse_mode or 'strict') == 'strict' %}selected{% endif %}>strict</option>
+      <option value="lenient" {% if (parse_mode or 'strict') == 'lenient' %}selected{% endif %}>lenient</option>
+    </select>
+
+    <label>
+      <input type="checkbox" name="compile_strategy" {% if compile_strategy is not defined or compile_strategy %}checked{% endif %} />
+      Compile into strategies/&lt;name&gt;/
+    </label>
+
+    <hr />
+
+    <label>Paste English rules</label>
+    <textarea name="english_text" rows="14" placeholder="Go long when EMA(20) crosses above EMA(50) on 4h">{{ english_text or '' }}</textarea>
+
+    <div class="muted">or upload a .txt file:</div>
+    <input type="file" name="english_file" accept=".txt" />
+
+    <button class="primary" type="submit">Next</button>
+  </form>
+{% endblock %}

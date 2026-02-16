@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1 id="builder-v3-title">Create Strategy (Builder V3)</h1>
+  <main id="builder-v3-root" role="main" aria-labelledby="builder-v3-title"></main>
+
+  <!-- CSRF token available via hidden input for non-AJAX fallback -->
+  {% if csrf_token %}
+    <input type="hidden" id="csrf_token" value="{{ csrf_token() }}" />
+  {% endif %}
+
+  <link rel="stylesheet" href="/static/css/builder_v3.css" />
+  <script type="module" src="/static/js/builder_v3/main.js"></script>
+{% endblock %}

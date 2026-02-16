@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Runs</h1>
+
+  {% if message %}
+    <div class="card" style="border-left: 4px solid #666;">
+      <div class="muted"><strong>{{ message }}</strong></div>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <p>These are the GUI run bundles (command + logs + inputs).</p>
+  </div>
+
+  <div class="card">
+    <ul>
+      {% for r in runs %}
+        <li>
+          <a href="/runs/{{ r.name }}">{{ r.name }}</a>
+          <a class="button button-danger" href="/runs/{{ r.name }}/delete">Delete…</a>
+        </li>
+      {% else %}
+        <li>No runs yet.</li>
+      {% endfor %}
+    </ul>
+
+    {% if run_total_pages and run_total_pages > 1 %}
+      <div class="muted" style="margin-top: 10px;">Showing page {{ run_page }} / {{ run_total_pages }} ({{ run_total }} total)</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 10px;">
+        {% if run_page > 1 %}
+          <a class="button" href="/runs?page={{ run_page - 1 }}&per_page={{ run_per_page }}">Prev</a>
+        {% endif %}
+        {% if run_page < run_total_pages %}
+          <a class="button" href="/runs?page={{ run_page + 1 }}&per_page={{ run_per_page }}">Next</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

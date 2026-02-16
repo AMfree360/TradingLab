@@ -1,0 +1,609 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Spec (Form): {{ spec_name }}</h1>
+
+  <div class="card">
+    <div class="muted">Path: {{ spec_rel_path }}</div>
+    {% if message %}
+      <div class="muted" style="margin-top: 10px;"><strong>{{ message }}</strong></div>
+    {% endif %}
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 12px;">
+      <a class="button" href="/strategies/spec/{{ spec_name }}">YAML view</a>
+      <a class="button" href="/backtest?strategy={{ spec_name }}">Backtest</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Edit (Form)</h2>
+
+    <form method="post" id="specForm" data-spec-name="{{ spec_name }}">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div>
+          <label for="name">Name</label>
+          <input id="name" name="name" value="{{ name }}" />
+        </div>
+        <div>
+          <label for="entry_tf">Entry timeframe</label>
+          <input id="entry_tf" name="entry_tf" value="{{ entry_tf }}" placeholder="15m, 1h, 4h, 1d" />
+        </div>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <label for="description">Description</label>
+        <input id="description" name="description" value="{{ description }}" />
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 12px;">
+        <div>
+          <label for="symbol">Symbol</label>
+          <input id="symbol" name="symbol" value="{{ symbol }}" placeholder="EURUSD" />
+        </div>
+        <div>
+          <label for="exchange">Exchange</label>
+          <input id="exchange" name="exchange" value="{{ exchange }}" placeholder="oanda" />
+        </div>
+        <div>
+          <label for="market_type">Market type</label>
+          <select id="market_type" name="market_type">
+            <option value="spot" {% if market_type == 'spot' %}selected{% endif %}>spot</option>
+            <option value="futures" {% if market_type == 'futures' %}selected{% endif %}>futures</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <label for="context_tf">Context timeframe (optional)</label>
+        <input id="context_tf" name="context_tf" value="{{ context_tf }}" placeholder="1d (leave blank to use entry_tf)" />
+        <div class="muted" style="margin-top: 6px;">This is informational + used by guided builders; the DSL still controls actual timeframes via <code>@tf</code>.</div>
+      </div>
+
+      <hr style="margin: 18px 0; opacity: 0.35;" />
+
+      <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+        <label style="display:flex; gap:8px; align-items:center; margin: 0;">
+          <input type="checkbox" name="long_enabled" {% if long_enabled %}checked{% endif %} />
+          Long enabled
+        </label>
+        <label style="display:flex; gap:8px; align-items:center; margin: 0;">
+          <input type="checkbox" name="short_enabled" {% if short_enabled %}checked{% endif %} />
+          Short enabled
+        </label>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px;">
+        <div>
+          <h3 style="margin: 0 0 8px;">Long conditions</h3>
+          <div id="longConds" class="muted" style="display:flex; flex-direction:column; gap:10px;">
+            {% for c in long_conds %}
+              <div class="card cond-row" style="padding: 10px;">
+                <div style="display:grid; grid-template-columns: 110px 180px 1fr; gap: 10px; align-items:start;">
+                  <input name="long_tf" value="{{ c.tf }}" placeholder="tf" />
+                  <select name="long_type" class="cond-type" onchange="onCondTypeChange(this)">
+                    <option value="ma_cross" {% if c.type == 'ma_cross' %}selected{% endif %}>MA cross</option>
+                    <option value="rsi" {% if c.type == 'rsi' %}selected{% endif %}>RSI level</option>
+                    <option value="close_vs_ma" {% if c.type == 'close_vs_ma' %}selected{% endif %}>Close vs MA</option>
+                    <option value="donchian" {% if c.type == 'donchian' %}selected{% endif %}>Donchian breakout</option>
+                    <option value="custom" {% if c.type == 'custom' %}selected{% endif %}>Custom expression</option>
+                  </select>
+                  <div class="muted" style="padding-top: 8px;">Saved as: <code class="cond-expr-preview">{{ c.expr }}</code></div>
+                </div>
+
+                <div class="cond-fields cond-ma-cross" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 140px 1fr 1fr 1fr; gap: 10px; align-items:end;">
+                    <div>
+                      <label>MA</label>
+                      <select name="long_cross_ma">
+                        <option value="ema" {% if c.cross_ma == 'ema' %}selected{% endif %}>EMA</option>
+                        <option value="sma" {% if c.cross_ma == 'sma' %}selected{% endif %}>SMA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Fast</label>
+                      <input name="long_cross_fast" type="number" min="1" value="{{ c.cross_fast }}" />
+                    </div>
+                    <div>
+                      <label>Slow</label>
+                      <input name="long_cross_slow" type="number" min="1" value="{{ c.cross_slow }}" />
+                    </div>
+                    <div>
+                      <label>Direction</label>
+                      <select name="long_cross_direction">
+                        <option value="above" {% if c.cross_direction == 'above' %}selected{% endif %}>crosses above</option>
+                        <option value="below" {% if c.cross_direction == 'below' %}selected{% endif %}>crosses below</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-rsi" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 140px 160px 1fr; gap: 10px; align-items:end;">
+                    <div class="muted" style="padding-top: 6px;">Condition: <code>rsi(close, len) op level</code></div>
+                    <div>
+                      <label>RSI length</label>
+                      <input name="long_rsi_len" type="number" min="1" value="{{ c.rsi_len }}" />
+                    </div>
+                    <div>
+                      <label>Operator</label>
+                      <select name="long_rsi_op">
+                        <option value="<" {% if c.rsi_op == '<' %}selected{% endif %}>&lt;</option>
+                        <option value=">" {% if c.rsi_op == '>' %}selected{% endif %}>&gt;</option>
+                        <option value="<=" {% if c.rsi_op == '<=' %}selected{% endif %}>&lt;=</option>
+                        <option value=">=" {% if c.rsi_op == '>=' %}selected{% endif %}>&gt;=</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Level</label>
+                      <input name="long_rsi_level" type="number" step="0.1" value="{{ c.rsi_level }}" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-close-vs-ma" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 140px 160px 1fr; gap: 10px; align-items:end;">
+                    <div class="muted" style="padding-top: 6px;">Condition: <code>close op ma(close, len)</code></div>
+                    <div>
+                      <label>MA</label>
+                      <select name="long_cv_ma">
+                        <option value="ema" {% if c.cv_ma == 'ema' %}selected{% endif %}>EMA</option>
+                        <option value="sma" {% if c.cv_ma == 'sma' %}selected{% endif %}>SMA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Operator</label>
+                      <select name="long_cv_op">
+                        <option value=">" {% if c.cv_op == '>' %}selected{% endif %}>&gt;</option>
+                        <option value="<" {% if c.cv_op == '<' %}selected{% endif %}>&lt;</option>
+                        <option value=">=" {% if c.cv_op == '>=' %}selected{% endif %}>&gt;=</option>
+                        <option value="<=" {% if c.cv_op == '<=' %}selected{% endif %}>&lt;=</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Length</label>
+                      <input name="long_cv_len" type="number" min="1" value="{{ c.cv_len }}" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-donchian" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 160px 1fr; gap: 10px; align-items:end;">
+                    <div class="muted" style="padding-top: 6px;">Condition: <code>crosses_*(close, shift(donchian_*(len), 1))</code></div>
+                    <div>
+                      <label>Length</label>
+                      <input name="long_don_len" type="number" min="1" value="{{ c.don_len }}" />
+                    </div>
+                    <div>
+                      <label>Direction</label>
+                      <select name="long_don_direction">
+                        <option value="breakout" {% if c.don_direction == 'breakout' %}selected{% endif %}>breakout (above high)</option>
+                        <option value="breakdown" {% if c.don_direction == 'breakdown' %}selected{% endif %}>breakdown (below low)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-custom" style="margin-top: 10px; display:none;">
+                  <label>Expression</label>
+                  <textarea class="cond-expr-custom" rows="2" placeholder="expr">{{ c.expr }}</textarea>
+                </div>
+
+                <input type="hidden" name="long_expr" class="cond-expr" value="{{ c.expr|e }}" />
+
+                <div style="margin-top: 8px;">
+                  <button type="button" class="button" onclick="removeRow(this)">Remove</button>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+          <div style="margin-top: 10px;">
+            <button type="button" class="button" onclick="addCond('long')">+ Add long condition</button>
+          </div>
+        </div>
+
+        <div>
+          <h3 style="margin: 0 0 8px;">Short conditions</h3>
+          <div id="shortConds" class="muted" style="display:flex; flex-direction:column; gap:10px;">
+            {% for c in short_conds %}
+              <div class="card cond-row" style="padding: 10px;">
+                <div style="display:grid; grid-template-columns: 110px 180px 1fr; gap: 10px; align-items:start;">
+                  <input name="short_tf" value="{{ c.tf }}" placeholder="tf" />
+                  <select name="short_type" class="cond-type" onchange="onCondTypeChange(this)">
+                    <option value="ma_cross" {% if c.type == 'ma_cross' %}selected{% endif %}>MA cross</option>
+                    <option value="rsi" {% if c.type == 'rsi' %}selected{% endif %}>RSI level</option>
+                    <option value="close_vs_ma" {% if c.type == 'close_vs_ma' %}selected{% endif %}>Close vs MA</option>
+                    <option value="donchian" {% if c.type == 'donchian' %}selected{% endif %}>Donchian breakout</option>
+                    <option value="custom" {% if c.type == 'custom' %}selected{% endif %}>Custom expression</option>
+                  </select>
+                  <div class="muted" style="padding-top: 8px;">Saved as: <code class="cond-expr-preview">{{ c.expr }}</code></div>
+                </div>
+
+                <div class="cond-fields cond-ma-cross" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 140px 1fr 1fr 1fr; gap: 10px; align-items:end;">
+                    <div>
+                      <label>MA</label>
+                      <select name="short_cross_ma">
+                        <option value="ema" {% if c.cross_ma == 'ema' %}selected{% endif %}>EMA</option>
+                        <option value="sma" {% if c.cross_ma == 'sma' %}selected{% endif %}>SMA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Fast</label>
+                      <input name="short_cross_fast" type="number" min="1" value="{{ c.cross_fast }}" />
+                    </div>
+                    <div>
+                      <label>Slow</label>
+                      <input name="short_cross_slow" type="number" min="1" value="{{ c.cross_slow }}" />
+                    </div>
+                    <div>
+                      <label>Direction</label>
+                      <select name="short_cross_direction">
+                        <option value="above" {% if c.cross_direction == 'above' %}selected{% endif %}>crosses above</option>
+                        <option value="below" {% if c.cross_direction == 'below' %}selected{% endif %}>crosses below</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-rsi" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 140px 160px 1fr; gap: 10px; align-items:end;">
+                    <div class="muted" style="padding-top: 6px;">Condition: <code>rsi(close, len) op level</code></div>
+                    <div>
+                      <label>RSI length</label>
+                      <input name="short_rsi_len" type="number" min="1" value="{{ c.rsi_len }}" />
+                    </div>
+                    <div>
+                      <label>Operator</label>
+                      <select name="short_rsi_op">
+                        <option value="<" {% if c.rsi_op == '<' %}selected{% endif %}>&lt;</option>
+                        <option value=">" {% if c.rsi_op == '>' %}selected{% endif %}>&gt;</option>
+                        <option value="<=" {% if c.rsi_op == '<=' %}selected{% endif %}>&lt;=</option>
+                        <option value=">=" {% if c.rsi_op == '>=' %}selected{% endif %}>&gt;=</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Level</label>
+                      <input name="short_rsi_level" type="number" step="0.1" value="{{ c.rsi_level }}" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-close-vs-ma" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 140px 160px 1fr; gap: 10px; align-items:end;">
+                    <div class="muted" style="padding-top: 6px;">Condition: <code>close op ma(close, len)</code></div>
+                    <div>
+                      <label>MA</label>
+                      <select name="short_cv_ma">
+                        <option value="ema" {% if c.cv_ma == 'ema' %}selected{% endif %}>EMA</option>
+                        <option value="sma" {% if c.cv_ma == 'sma' %}selected{% endif %}>SMA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Operator</label>
+                      <select name="short_cv_op">
+                        <option value=">" {% if c.cv_op == '>' %}selected{% endif %}>&gt;</option>
+                        <option value="<" {% if c.cv_op == '<' %}selected{% endif %}>&lt;</option>
+                        <option value=">=" {% if c.cv_op == '>=' %}selected{% endif %}>&gt;=</option>
+                        <option value="<=" {% if c.cv_op == '<=' %}selected{% endif %}>&lt;=</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Length</label>
+                      <input name="short_cv_len" type="number" min="1" value="{{ c.cv_len }}" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-donchian" style="margin-top: 10px; display:none;">
+                  <div style="display:grid; grid-template-columns: 1fr 160px 1fr; gap: 10px; align-items:end;">
+                    <div class="muted" style="padding-top: 6px;">Condition: <code>crosses_*(close, shift(donchian_*(len), 1))</code></div>
+                    <div>
+                      <label>Length</label>
+                      <input name="short_don_len" type="number" min="1" value="{{ c.don_len }}" />
+                    </div>
+                    <div>
+                      <label>Direction</label>
+                      <select name="short_don_direction">
+                        <option value="breakout" {% if c.don_direction == 'breakout' %}selected{% endif %}>breakout (above high)</option>
+                        <option value="breakdown" {% if c.don_direction == 'breakdown' %}selected{% endif %}>breakdown (below low)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="cond-fields cond-custom" style="margin-top: 10px; display:none;">
+                  <label>Expression</label>
+                  <textarea class="cond-expr-custom" rows="2" placeholder="expr">{{ c.expr }}</textarea>
+                </div>
+
+                <input type="hidden" name="short_expr" class="cond-expr" value="{{ c.expr|e }}" />
+
+                <div style="margin-top: 8px;">
+                  <button type="button" class="button" onclick="removeRow(this)">Remove</button>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+          <div style="margin-top: 10px;">
+            <button type="button" class="button" onclick="addCond('short')">+ Add short condition</button>
+          </div>
+        </div>
+      </div>
+
+      <hr style="margin: 18px 0; opacity: 0.35;" />
+
+      <h3 style="margin: 0 0 10px;">Stops</h3>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div>
+          <label for="stop_type">Stop type</label>
+          <select id="stop_type" name="stop_type" onchange="toggleStopFields()">
+            <option value="atr" {% if stop_type == 'atr' %}selected{% endif %}>ATR</option>
+            <option value="percent" {% if stop_type == 'percent' %}selected{% endif %}>Percent</option>
+          </select>
+        </div>
+        <div id="stop_percent_wrap">
+          <label for="stop_percent">Stop percent</label>
+          <input id="stop_percent" name="stop_percent" value="{{ stop_percent }}" placeholder="0.02" />
+        </div>
+      </div>
+
+      <div id="stop_atr_wrap" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
+        <div>
+          <label for="atr_length">ATR length</label>
+          <input id="atr_length" name="atr_length" value="{{ atr_length }}" />
+        </div>
+        <div>
+          <label for="atr_multiplier">ATR multiplier</label>
+          <input id="atr_multiplier" name="atr_multiplier" value="{{ atr_multiplier }}" />
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 14px;">
+        <button type="submit" class="primary" name="action" value="save">Save</button>
+        <button type="submit" name="action" value="save_compile">Save + compile</button>
+      </div>
+
+      <div class="muted" style="margin-top: 10px;">
+        Saving validates against <code>StrategySpec</code>. If you change <code>name</code>, the file will be renamed.
+      </div>
+
+      <div class="card" style="margin-top: 14px;">
+        <div style="display:flex; align-items:center; justify-content: space-between; gap: 12px;">
+          <h3 style="margin:0;">YAML preview (what will be saved)</h3>
+          <div id="yamlPreviewStatus" class="muted" style="font-size: 12px;"></div>
+        </div>
+        <div id="yamlPreviewNote" class="muted" style="margin-top: 6px; font-size: 12px;"></div>
+        <div id="yamlPreviewError" style="display:none; margin-top: 10px; color: #b42318;"></div>
+        <pre id="yamlPreview" style="margin-top: 10px; max-height: 420px; overflow: auto; background: #0b1020; color: #e6e6e6; padding: 12px; border-radius: 8px;">Loading preview…</pre>
+      </div>
+
+      <details style="margin-top: 16px;">
+        <summary style="cursor:pointer;"><strong>Advanced (optional)</strong> <span class="muted">— only saved if enabled</span></summary>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 12px;">
+          <button type="submit" class="primary" name="action" value="save">Save</button>
+          <button type="submit" name="action" value="save_compile">Save + compile</button>
+        </div>
+
+        <div class="muted" style="margin-top: 8px; font-size: 12px;">
+          Same actions as the main buttons above.
+        </div>
+
+        {% set mc = master_calendar|default({'allowed_days':[0,1,2,3,4], 'sessions': {'Asia': {'enabled': True, 'start':'23:00', 'end':'08:00'}, 'London': {'enabled': True, 'start':'07:00', 'end':'16:00'}, 'NewYork': {'enabled': True, 'start':'13:00', 'end':'21:00'}}}, true) %}
+        {% set mtm = master_tm|default({'take_profit': {'enabled': True, 'target_r': 3.0, 'exit_pct': 100.0}, 'partial_exit': {'enabled': False, 'level_r': 1.5, 'exit_pct': 50.0}, 'trailing_stop': {'enabled': False, 'length': 21, 'activation_r': 0.5, 'stepped': True, 'min_move_pips': 7.0}}, true) %}
+
+        <div class="card" style="margin-top: 12px;">
+          <h3 style="margin:0 0 8px;">Risk</h3>
+          <label style="display:flex; gap:8px; align-items:center; margin: 0 0 10px;">
+            <input type="checkbox" name="adv_risk_enabled" id="adv_risk_enabled" {% if adv_risk_enabled %}checked{% endif %} />
+            Enable risk override
+          </label>
+          <div id="adv_risk_fields" style="display:none;">
+            <label>Risk per trade (%)</label>
+            <input name="risk_per_trade_pct" type="number" step="0.1" min="0.01" value="{{ risk_per_trade_pct }}" />
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 12px;">
+          <h3 style="margin:0 0 8px;">Calendar filters</h3>
+          <label style="display:flex; gap:8px; align-items:center; margin: 0 0 10px;">
+            <input type="checkbox" name="adv_calendar_enabled" id="adv_calendar_enabled" {% if adv_calendar_enabled %}checked{% endif %} />
+            Enable calendar filter override
+          </label>
+          <div id="adv_calendar_fields" style="display:none;">
+            <details class="card" style="margin-top: 10px;">
+              <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
+              <div style="margin-top: 10px;" class="muted">
+                Allowed days: {{ mc['allowed_days'] }}<br />
+                Asia: {{ mc['sessions']['Asia']['start'] }}–{{ mc['sessions']['Asia']['end'] }} (enabled={{ mc['sessions']['Asia']['enabled'] }})<br />
+                London: {{ mc['sessions']['London']['start'] }}–{{ mc['sessions']['London']['end'] }} (enabled={{ mc['sessions']['London']['enabled'] }})<br />
+                NewYork: {{ mc['sessions']['NewYork']['start'] }}–{{ mc['sessions']['NewYork']['end'] }} (enabled={{ mc['sessions']['NewYork']['enabled'] }})
+              </div>
+            </details>
+
+            <label>
+              <input type="radio" name="calendar_mode" value="master" {% if calendar_mode == 'master' %}checked{% endif %} />
+              Use master defaults
+            </label>
+            <label>
+              <input type="radio" name="calendar_mode" value="disable" {% if calendar_mode == 'disable' %}checked{% endif %} />
+              Disable calendar filters
+            </label>
+            <label>
+              <input type="radio" name="calendar_mode" value="custom" {% if calendar_mode == 'custom' %}checked{% endif %} />
+              Custom
+            </label>
+
+            <div id="calendar_custom" style="margin-top: 10px; display:none;">
+              <div class="card" style="margin-top: 12px;">
+                <strong>Allowed days</strong>
+                <div class="muted">0=Mon … 6=Sun</div>
+                {% for d in [0,1,2,3,4,5,6] %}
+                  <label>
+                    <input type="checkbox" name="dow" value="{{ d }}" {% if d in calendar_allowed_days %}checked{% endif %} />
+                    {% if d==0 %}Mon{% elif d==1 %}Tue{% elif d==2 %}Wed{% elif d==3 %}Thu{% elif d==4 %}Fri{% elif d==5 %}Sat{% else %}Sun{% endif %}
+                  </label>
+                {% endfor %}
+              </div>
+
+              <div class="card" style="margin-top: 12px;">
+                <strong>Trading sessions</strong>
+                <div class="muted">Session windows come from master config; you can only toggle enabled/disabled here.</div>
+                <button type="button" id="copyMasterCalendarBtn" style="margin-top: 8px;">Copy master → custom</button>
+                <div style="margin-top: 10px;">
+                  <label><input type="checkbox" name="session_Asia" value="1" {% if calendar_sessions.get('Asia') %}checked{% endif %} /> Asia ({{ mc['sessions']['Asia']['start'] }}–{{ mc['sessions']['Asia']['end'] }})</label>
+                  <label><input type="checkbox" name="session_London" value="1" {% if calendar_sessions.get('London') %}checked{% endif %} /> London ({{ mc['sessions']['London']['start'] }}–{{ mc['sessions']['London']['end'] }})</label>
+                  <label><input type="checkbox" name="session_NewYork" value="1" {% if calendar_sessions.get('NewYork') %}checked{% endif %} /> NewYork ({{ mc['sessions']['NewYork']['start'] }}–{{ mc['sessions']['NewYork']['end'] }})</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 12px;">
+          <h3 style="margin:0 0 8px;">Trade management overrides</h3>
+          <label style="display:flex; gap:8px; align-items:center; margin: 0 0 10px;">
+            <input type="checkbox" name="adv_tm_enabled" id="adv_tm_enabled" {% if adv_tm_enabled %}checked{% endif %} />
+            Enable trade management overrides
+          </label>
+          <div id="adv_tm_fields" style="display:none;">
+            <details class="card" style="margin-top: 10px;">
+              <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
+              <div style="margin-top: 10px;" class="muted">
+                Take profit: enabled={{ mtm['take_profit']['enabled'] }}, target_r={{ mtm['take_profit']['target_r'] }}, exit_pct={{ mtm['take_profit']['exit_pct'] }}<br />
+                Partial exit: enabled={{ mtm['partial_exit']['enabled'] }}, level_r={{ mtm['partial_exit']['level_r'] }}, exit_pct={{ mtm['partial_exit']['exit_pct'] }}<br />
+                Trailing stop: enabled={{ mtm['trailing_stop']['enabled'] }}, length={{ mtm['trailing_stop']['length'] }}, activation_r={{ mtm['trailing_stop']['activation_r'] }}, stepped={{ mtm['trailing_stop']['stepped'] }}, min_move_pips={{ mtm['trailing_stop']['min_move_pips'] }}
+              </div>
+            </details>
+
+            <div class="card" style="margin-top: 12px;">
+              <strong>Take profit</strong>
+              <label>
+                <input type="radio" name="tp_mode" value="master" {% if tp_mode == 'master' %}checked{% endif %} />
+                Use master defaults
+              </label>
+              <label>
+                <input type="radio" name="tp_mode" value="disable" {% if tp_mode == 'disable' %}checked{% endif %} />
+                Disable take profit
+              </label>
+              <label>
+                <input type="radio" name="tp_mode" value="custom" {% if tp_mode == 'custom' %}checked{% endif %} />
+                Custom (single level)
+              </label>
+
+              <div id="tp_custom" style="margin-top: 10px; display:none;">
+                <button type="button" id="copyMasterTpBtn" style="margin-bottom: 8px;">Copy master → custom</button>
+                <label>Target R</label>
+                <input name="tp_target_r" type="number" step="0.1" min="0.1" value="{{ tp_target_r }}" />
+                <label>Exit %</label>
+                <input name="tp_exit_pct" type="number" step="1" min="1" max="100" value="{{ tp_exit_pct }}" />
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 12px;">
+              <strong>Partial exit</strong>
+              <label>
+                <input type="checkbox" name="partial_enabled" value="1" {% if partial_enabled %}checked{% endif %} />
+                Enable partial exit (single level)
+              </label>
+              <div id="partial_fields" style="margin-top: 10px; display:none;">
+                <button type="button" id="copyMasterPartialBtn" style="margin-bottom: 8px;">Copy master values</button>
+                <label>Level R</label>
+                <input name="partial_level_r" type="number" step="0.1" min="0.1" value="{{ partial_level_r }}" />
+                <label>Exit %</label>
+                <input name="partial_exit_pct" type="number" step="1" min="1" max="100" value="{{ partial_exit_pct }}" />
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 12px;">
+              <strong>Trailing stop</strong>
+              <label>
+                <input type="checkbox" name="trailing_enabled" value="1" {% if trailing_enabled %}checked{% endif %} />
+                Enable trailing stop (EMA)
+              </label>
+              <div id="trailing_fields" style="margin-top: 10px; display:none;">
+                <button type="button" id="copyMasterTrailingBtn" style="margin-bottom: 8px;">Copy master values</button>
+                <label>EMA length</label>
+                <input name="trailing_length" type="number" min="1" value="{{ trailing_length }}" />
+                <label>Activation R</label>
+                <input name="trailing_activation_r" type="number" step="0.1" min="0" value="{{ trailing_activation_r }}" />
+                <label>
+                  <input type="checkbox" name="trailing_stepped" value="1" {% if trailing_stepped %}checked{% endif %} />
+                  Stepped trailing
+                </label>
+                <label>Min move (pips)</label>
+                <input name="trailing_min_move_pips" type="number" step="0.1" min="0" value="{{ trailing_min_move_pips }}" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 12px;">
+          <h3 style="margin:0 0 8px;">Execution overrides</h3>
+          <label style="display:flex; gap:8px; align-items:center; margin: 0 0 10px;">
+            <input type="checkbox" name="adv_exec_enabled" id="adv_exec_enabled" {% if adv_exec_enabled %}checked{% endif %} />
+            Enable execution overrides
+          </label>
+          <div id="adv_exec_fields" style="display:none;">
+            <label>
+              <input type="checkbox" name="flatten_enabled" value="1" {% if flatten_enabled %}checked{% endif %} />
+              Flatten enabled
+            </label>
+            <label>Flatten time (UTC HH:MM)</label>
+            <input name="flatten_time" value="{{ flatten_time }}" placeholder="21:30" />
+            <label>Stop signal search minutes before</label>
+            <input name="stop_signal_search_minutes_before" value="{{ stop_signal_search_minutes_before }}" placeholder="60" />
+            <label>
+              <input type="checkbox" name="use_intraday_margin" value="1" {% if use_intraday_margin %}checked{% endif %} />
+              Use intraday margin
+            </label>
+          </div>
+        </div>
+
+        <div class="muted" style="margin-top: 8px;">
+          Tip: Keep Advanced off unless you intentionally want overrides. If a section is off, it is removed from the spec and won’t show up in YAML.
+        </div>
+      </details>
+
+      <div
+        id="masterDefaults"
+        style="display:none;"
+        data-allowed-days="{{ mc['allowed_days']|join(',') }}"
+        data-session-asia-enabled="{{ 1 if mc['sessions']['Asia']['enabled'] else 0 }}"
+        data-session-london-enabled="{{ 1 if mc['sessions']['London']['enabled'] else 0 }}"
+        data-session-newyork-enabled="{{ 1 if mc['sessions']['NewYork']['enabled'] else 0 }}"
+        data-tp-enabled="{{ 1 if mtm['take_profit']['enabled'] else 0 }}"
+        data-tp-target-r="{{ mtm['take_profit']['target_r'] }}"
+        data-tp-exit-pct="{{ mtm['take_profit']['exit_pct'] }}"
+        data-partial-enabled="{{ 1 if mtm['partial_exit']['enabled'] else 0 }}"
+        data-partial-level-r="{{ mtm['partial_exit']['level_r'] }}"
+        data-partial-exit-pct="{{ mtm['partial_exit']['exit_pct'] }}"
+        data-trailing-enabled="{{ 1 if mtm['trailing_stop']['enabled'] else 0 }}"
+        data-trailing-length="{{ mtm['trailing_stop']['length'] }}"
+        data-trailing-activation-r="{{ mtm['trailing_stop']['activation_r'] }}"
+        data-trailing-stepped="{{ 1 if mtm['trailing_stop']['stepped'] else 0 }}"
+        data-trailing-min-move-pips="{{ mtm['trailing_stop']['min_move_pips'] }}"
+      ></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Compile only</h2>
+    <form method="post" action="/strategies/spec/{{ spec_name }}/form">
+      <button type="submit" name="action" value="compile">Compile from saved spec</button>
+    </form>
+  </div>
+
+  <div class="card" style="border-left: 4px solid #b42318;">
+    <h2 style="margin-top:0;">Danger zone</h2>
+    <div class="muted">
+      Deletes the spec in <code>research_specs/</code> and (by default) the compiled generated folder in <code>strategies/</code>.
+      Past runs/logs/reports are preserved.
+    </div>
+
+    <div style="margin-top: 12px;">
+      <a class="button button-danger" href="/strategies/spec/{{ spec_name }}/delete">Delete strategy…</a>
+    </div>
+  </div>
+
+  <script src="/static/js/strategy_spec_form.js"></script>
+{% endblock %}

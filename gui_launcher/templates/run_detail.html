@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Run: {{ run_name }}</h1>
+
+  <div class="card">
+    <div class="muted">{{ run_dir }}</div>
+    <a class="button" href="/runs/{{ run_name }}/export.zip">Export bug report (zip)</a>
+    <a class="button button-danger" href="/runs/{{ run_name }}/delete">Delete run…</a>
+    {% if report_href %}
+      <a class="button primary" href="{{ report_href }}" target="_blank">Open report</a>
+    {% endif %}
+    {% if report_json_href %}
+      <a class="button" href="{{ report_json_href }}" target="_blank">Open report JSON</a>
+    {% endif %}
+    {% if strategy_hint %}
+      <a class="button" href="/backtest?strategy={{ strategy_hint }}">Backtest again</a>
+    {% endif %}
+    {% if can_rerun_backtest %}
+      <form method="post" action="/runs/{{ run_name }}/rerun" style="margin-top: 10px;">
+        <button type="submit" class="primary">Rerun (same settings)</button>
+      </form>
+    {% endif %}
+    {% if spec_exists %}
+      <a class="button" href="/strategies/from-run/{{ run_name }}">Edit spec (in place)</a>
+      <a class="button" href="/tune/{{ run_name }}">Tune + rebuild (v2)</a>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Quick diagnosis</h2>
+    {% if diagnosis and diagnosis.headline %}
+      <div><strong>{{ diagnosis.headline }}</strong></div>
+    {% endif %}
+
+    {% if diagnosis and diagnosis.metrics %}
+      <div class="muted" style="margin-top: 8px;">
+        Trades: {{ diagnosis.metrics.total_trades }}
+        · PnL: {{ diagnosis.metrics.total_pnl }}
+        {% if diagnosis.metrics.profit_factor is not none %}· PF: {{ diagnosis.metrics.profit_factor }}{% endif %}
+        {% if diagnosis.metrics.sharpe is not none %}· Sharpe: {{ diagnosis.metrics.sharpe }}{% endif %}
+        {% if diagnosis.metrics.max_drawdown_pct is not none %}· Max DD%: {{ diagnosis.metrics.max_drawdown_pct }}{% endif %}
+        {% if diagnosis.metrics.win_rate is not none %}· Win%: {{ diagnosis.metrics.win_rate }}{% endif %}
+      </div>
+    {% endif %}
+
+    {% if diagnosis and diagnosis.exit_reasons and diagnosis.exit_reasons|length > 0 %}
+      <div class="muted" style="margin-top: 8px;">
+        Top exits:
+        {% for r in diagnosis.exit_reasons %}
+          {{ r.reason }} ({{ r.count }}, {{ (r.share * 100) | round(0) }}%)
+          {% if not loop.last %}·{% endif %}
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if diagnosis and diagnosis.suggestions and diagnosis.suggestions|length > 0 %}
+      <div style="margin-top: 12px;">
+        <div class="muted">Suggested next tweaks</div>
+        {% for s in diagnosis.suggestions %}
+          <div style="margin-top: 8px;">
+            {% if spec_exists and s.preset %}
+              <a class="button" href="/tune/{{ run_name }}?preset={{ s.preset }}">{{ s.label }}</a>
+            {% else %}
+              <div>{{ s.label }}</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Command</h2>
+    <pre>{{ command }}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Inputs</h2>
+    <pre>{{ inputs }}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Meta</h2>
+    <pre>{{ meta }}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Stdout</h2>
+    <pre>{{ stdout }}</pre>
+  </div>
+
+  {% if stderr %}
+    <div class="card card-error">
+      <h2>Stderr</h2>
+      <pre>{{ stderr }}</pre>
+    </div>
+  {% endif %}
+{% endblock %}

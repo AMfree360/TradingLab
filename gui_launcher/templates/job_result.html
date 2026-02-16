@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Run Status</h1>
+
+  <div class="card">
+    <div><strong>Exit code:</strong> {{ job.exit_code if job.exit_code is not none else 'running' }}</div>
+    {% if job.finished_at is none %}
+      <p>Still running… <a href="/job/{{ job.id }}">Refresh</a></p>
+    {% else %}
+      <p>Finished in {{ '%.1f' % (job.finished_at - job.started_at) }}s.</p>
+    {% endif %}
+
+    {% if bundle_dir %}
+      <div class="muted">Run bundle: {{ bundle_dir }}</div>
+    {% endif %}
+  </div>
+
+  {% if spec_path %}
+    <div class="card">
+      <h2>Created</h2>
+      <div><strong>Spec:</strong> {{ spec_path }}</div>
+      {% if built_path %}<div><strong>Strategy:</strong> {{ built_path }}</div>{% endif %}
+      {% if strategy_name %}
+        <a class="button" href="/backtest?strategy={{ strategy_name }}">Backtest this strategy</a>
+        <a class="button" href="/strategies/spec/{{ strategy_name }}">Edit spec</a>
+      {% endif %}
+      {% if bundle_dir %}
+        {% set run_name = bundle_dir.split('/')[-1] %}
+        <a class="button" href="/tune/{{ run_name }}">Tune + rebuild (make a v2)</a>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if report_path %}
+    <div class="card">
+      <h2>Report</h2>
+      <div><strong>Report path:</strong> {{ report_path }}</div>
+      {% if '/reports/' in report_path or report_path.endswith('.html') %}
+        {% set filename = report_path.split('/')[-1] %}
+        <a class="button primary" href="/reports/{{ filename }}" target="_blank">Open report</a>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Stdout</h2>
+    <pre>{{ job.stdout }}</pre>
+  </div>
+
+  {% if job.stderr %}
+    <div class="card card-error">
+      <h2>Stderr</h2>
+      <pre>{{ job.stderr }}</pre>
+    </div>
+  {% endif %}
+{% endblock %}

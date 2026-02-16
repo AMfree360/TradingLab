@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Backtest</h1>
+
+  <form class="card" method="post" action="/backtest/run" enctype="multipart/form-data">
+    <label>Strategy name</label>
+    <input name="strategy" type="text" value="{{ strategy }}" required />
+
+    <label>
+      <input type="checkbox" name="report_visuals" checked />
+      Include visuals in HTML report
+    </label>
+
+    <hr />
+
+    <h2>Dataset</h2>
+    <div class="muted">Upload a dataset (CSV/Parquet), or let TradingLab download sample data.</div>
+    <div class="muted" style="margin-top: 6px;">GUI runs are non-interactive: timeframe mismatches are auto-resampled, and uploaded datasets are backtested on their own date range (split policy is skipped for custom uploads).</div>
+
+    <label>Upload dataset (optional)</label>
+    <input id="data_file" type="file" name="data_file" />
+    <div id="dataset_info" class="muted" style="margin-top: 6px;"></div>
+
+    <label>
+      <input type="checkbox" name="download_data" />
+      Download sample data if no dataset uploaded
+    </label>
+
+    <label>Download symbol</label>
+    <input name="download_symbol" type="text" value="BTCUSDT" />
+
+    <label>Download interval</label>
+    <input name="download_interval" type="text" value="15m" />
+
+    <hr />
+
+    <details class="card" style="margin-top: 12px;">
+      <summary><strong>Advanced options</strong> <span class="muted">(split policy, dates, market overrides)</span></summary>
+
+      <div style="margin-top: 12px;">
+        <h2 style="margin-top: 0;">Split policy</h2>
+        <div class="muted">Split policy prevents accidentally using holdout/OOS periods. For custom uploaded data, <code>auto</code> is recommended.</div>
+
+        <label>Split policy mode</label>
+        <select name="split_policy_mode">
+          <option value="auto" {% if default_split_policy_mode == 'auto' %}selected{% endif %}>auto (enforce only when no --data provided)</option>
+          <option value="enforce" {% if default_split_policy_mode == 'enforce' %}selected{% endif %}>enforce (always apply policy dates)</option>
+          <option value="none" {% if default_split_policy_mode == 'none' %}selected{% endif %}>none (never apply split policy)</option>
+        </select>
+
+        <label>Split policy name</label>
+        <select name="split_policy_name">
+          {% if split_policy_names and split_policy_names|length > 0 %}
+            {% for n in split_policy_names %}
+              <option value="{{ n }}" {% if n == default_split_policy_name %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          {% else %}
+            <option value="{{ default_split_policy_name }}" selected>{{ default_split_policy_name }}</option>
+          {% endif %}
+        </select>
+
+        <label>
+          <input type="checkbox" name="override_split_policy" />
+          Override split policy (allow custom dates outside policy)
+        </label>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <h2>Date range</h2>
+        <div class="muted">By default, the GUI uses the detected dataset range. Advanced users can override below (YYYY-MM-DD).</div>
+        <label>Start date</label>
+        <input id="start_date" name="start_date" type="text" placeholder="YYYY-MM-DD" />
+        <label>End date</label>
+        <input id="end_date" name="end_date" type="text" placeholder="YYYY-MM-DD" />
+      </div>
+
+      <div style="margin-top: 12px;">
+        <h2>Market overrides</h2>
+        <div class="muted">Optional: load market profile + config overrides for the symbol (e.g., EURUSD). Useful when your dataset is not BTCUSDT.</div>
+        <label>Market symbol</label>
+        <input id="market_symbol" name="market" type="text" placeholder="EURUSD" />
+
+        <label>Config profile</label>
+        <input name="config_profile" type="text" placeholder="optimized_eurusd_2024" />
+      </div>
+
+      <div style="margin-top: 12px;">
+        <h2>Execution realism</h2>
+        <div class="muted">Slippage is market-dependent (FX= pips, futures= ticks, others= price). Default is prefilled using market-aware defaults.</div>
+
+        <label>
+          <input id="slippage_enabled" type="checkbox" name="slippage_enabled" value="1" {% if slippage_enabled_default %}checked{% endif %} />
+          Include slippage
+        </label>
+
+        <label>Slippage (<span id="slippage_unit_label">{{ slippage_unit|default('ticks') }}</span>)</label>
+        <input
+          id="slippage_value"
+          name="slippage_value"
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="{{ slippage_default_value if slippage_default_value is not none else '' }}"
+          value="{{ slippage_default_value if slippage_default_value is not none else '' }}"
+        />
+
+        <div id="slippage_hint" class="muted" style="margin-top:6px;"></div>
+
+        <div
+          id="slippageDefaults"
+          style="display:none;"
+          data-initial-value="{{ slippage_default_value if slippage_default_value is not none else '' }}"
+          data-initial-unit="{{ slippage_unit|default('ticks') }}"
+        ></div>
+      </div>
+    </details>
+
+    <button class="primary" type="submit">Run backtest</button>
+  </form>
+
+  <script src="/static/js/backtest.js"></script>
+{% endblock %}

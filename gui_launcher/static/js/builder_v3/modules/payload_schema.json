@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Builder V3 Payload",
+  "type": "object",
+  "required": ["symbol","entry_tf","long_enabled","short_enabled"],
+  "properties": {
+    "draft_id": { "type": ["string","null"] },
+    "name": { "type": "string" },
+    "symbol": { "type": "string" },
+    "asset_class": { "type": "string" },
+    "exchange": { "type": "string" },
+    "market_type": { "type": "string" },
+    "long_enabled": { "type": "boolean" },
+    "short_enabled": { "type": "boolean" },
+    "align_with_context": { "type": "boolean" },
+    "entry_tf": { "type": "string" },
+    "context_tf": { "type": "string" },
+    "signal_tf": { "type": "string" },
+    "trigger_tf": { "type": "string" },
+    "primary_context_type": { "type": "string" },
+    "align_with_context": { "type": "boolean" },
+    "ma_type": { "type": "string" },
+    "ma_fast": { "type": "number" },
+    "ma_mid": { "type": "number" },
+    "ma_slow": { "type": "number" },
+    "stack_mode": { "type": "string" },
+    "slope_mode": { "type": "string" },
+    "slope_lookback": { "type": "integer", "minimum": 0 },
+    "min_ma_dist_pct": { "type": "number", "minimum": 0 },
+    "trigger_type": { "type": "string" },
+    "trigger_valid_for_bars": { "type": "integer", "minimum": 0 },
+    "pin_wick_body": { "type": "number" },
+    "pin_opp_wick_body_max": { "type": "number" },
+    "pin_min_body_pct": { "type": "number", "minimum": 0 },
+    "trigger_ma_type": { "type": "string" },
+    "trigger_ma_len": { "type": "integer", "minimum": 0 },
+    "trigger_don_len": { "type": "integer", "minimum": 0 },
+    "trigger_range_len": { "type": "integer", "minimum": 0 },
+    "trigger_atr_len": { "type": "integer", "minimum": 0 },
+    "trigger_atr_mult": { "type": "number" },
+    "trigger_custom_bull_expr": { "type": "string" },
+    "trigger_custom_bear_expr": { "type": "string" },
+    "risk_per_trade_pct": { "type": "number", "minimum": 0 },
+    "sizing_mode": { "type": "string" },
+    "account_size": { "type": "number", "minimum": 0 },
+    "max_trades_per_day": { "type": "integer", "minimum": 0 },
+    "max_daily_loss_pct": { "type": ["number","null"] },
+    "context_rules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/rule" }
+    },
+    "signal_rules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/rule" }
+    },
+    "trigger_rules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/rule" }
+    },
+    "stops": { "type": "object" },
+    "trade_management": { "type": "object" },
+    "calendar": { "type": "object" },
+    "execution": { "type": "object" }
+  },
+  "definitions": {
+    "rule": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string" },
+        "tf": { "type": "string" },
+        "valid_for_bars": { "type": "integer", "minimum": 0 },
+        "bull_expr": { "type": "string" },
+        "bear_expr": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,607 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Step 5 — Advanced (Optional)</h2>
+  <div class="muted">Newbie path: keep defaults and hit Skip. Advanced users can override filters and trade management here.</div>
+
+  {% set ad_root = advanced_defaults or {} %}
+  {% set ad = ad_root.get('defaults') or {} %}
+  {% set ad_labels = ad.get('labels') or {} %}
+  {% set tz_label = ad_labels.get('timezone') or 'UTC (GMT+00)' %}
+
+  <form class="card" method="post" action="/create-strategy-guided/step5" novalidate>
+    <input type="hidden" name="draft_id" value="{{ draft_id }}" />
+
+    <h3>Calendar filters</h3>
+    <div class="muted">Controls TradingLab calendar filters (day-of-week + sessions). This overrides the repo master filter defaults.</div>
+    <div class="muted" style="margin-top: 6px;">Timezone: <strong>{{ tz_label }}</strong></div>
+
+    {% set mc = master_calendar|default({'allowed_days':[0,1,2,3,4], 'sessions': {'Asia': {'enabled': True, 'start':'23:00', 'end':'08:00'}, 'London': {'enabled': True, 'start':'07:00', 'end':'16:00'}, 'NewYork': {'enabled': True, 'start':'13:00', 'end':'21:00'}}}, true) %}
+    {% set mtm = master_tm|default({'take_profit': {'enabled': True, 'target_r': 3.0, 'exit_pct': 100.0}, 'partial_exit': {'enabled': False, 'level_r': 1.5, 'exit_pct': 50.0}, 'trailing_stop': {'enabled': False, 'length': 21, 'activation_r': 0.5, 'stepped': True, 'min_move_pips': 7.0}}, true) %}
+
+    {% set cal_mode = draft.get('calendar_filters_mode') or 'master' %}
+
+    <label>
+      <input type="radio" name="calendar_mode" value="master" {% if cal_mode == 'master' %}checked{% endif %} />
+      Use master defaults (recommended)
+    </label>
+    <label>
+      <input type="radio" name="calendar_mode" value="disable" {% if cal_mode == 'disable' %}checked{% endif %} />
+      Disable calendar filters (override master)
+    </label>
+    <label>
+      <input type="radio" name="calendar_mode" value="custom" {% if cal_mode == 'custom' %}checked{% endif %} />
+      Custom
+    </label>
+
+    {% set allowed_days = draft.get('calendar_allowed_days') or mc['allowed_days'] %}
+    {% set sessions = draft.get('calendar_sessions') or {'Asia': (mc['sessions']['Asia']['enabled']|default(true)), 'London': (mc['sessions']['London']['enabled']|default(true)), 'NewYork': (mc['sessions']['NewYork']['enabled']|default(true))} %}
+    {% set sess_times = draft.get('calendar_session_times') or {'Asia': {'start': mc['sessions']['Asia']['start'], 'end': mc['sessions']['Asia']['end']}, 'London': {'start': mc['sessions']['London']['start'], 'end': mc['sessions']['London']['end']}, 'NewYork': {'start': mc['sessions']['NewYork']['start'], 'end': mc['sessions']['NewYork']['end']}} %}
+
+    <details class="card" style="margin-top: 12px;">
+      <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
+      <div style="margin-top: 10px;">
+        <div><strong>Allowed days:</strong> {{ mc['allowed_days'] }}</div>
+        <div style="margin-top: 6px;"><strong>Sessions:</strong></div>
+        <div class="muted" style="margin-top: 4px;">
+          Asia: {{ mc['sessions']['Asia']['start'] }}–{{ mc['sessions']['Asia']['end'] }} (enabled={{ mc['sessions']['Asia']['enabled'] }})<br />
+          London: {{ mc['sessions']['London']['start'] }}–{{ mc['sessions']['London']['end'] }} (enabled={{ mc['sessions']['London']['enabled'] }})<br />
+          NewYork: {{ mc['sessions']['NewYork']['start'] }}–{{ mc['sessions']['NewYork']['end'] }} (enabled={{ mc['sessions']['NewYork']['enabled'] }})
+        </div>
+      </div>
+    </details>
+
+    <div id="calendar_custom" style="margin-top: 10px; display: none;">
+      <div class="card" style="margin-top: 12px;">
+        <strong>Allowed days</strong>
+        <div class="muted">0=Mon … 6=Sun. Typical: Mon–Fri.</div>
+        <label><input type="checkbox" name="dow" value="0" {% if 0 in allowed_days %}checked{% endif %} /> Mon</label>
+        <label><input type="checkbox" name="dow" value="1" {% if 1 in allowed_days %}checked{% endif %} /> Tue</label>
+        <label><input type="checkbox" name="dow" value="2" {% if 2 in allowed_days %}checked{% endif %} /> Wed</label>
+        <label><input type="checkbox" name="dow" value="3" {% if 3 in allowed_days %}checked{% endif %} /> Thu</label>
+        <label><input type="checkbox" name="dow" value="4" {% if 4 in allowed_days %}checked{% endif %} /> Fri</label>
+        <label><input type="checkbox" name="dow" value="5" {% if 5 in allowed_days %}checked{% endif %} /> Sat</label>
+        <label><input type="checkbox" name="dow" value="6" {% if 6 in allowed_days %}checked{% endif %} /> Sun</label>
+      </div>
+
+      <div class="card" style="margin-top: 12px;">
+        <strong>Trading sessions</strong>
+        <div class="muted">Custom session windows are stored in UTC. You can enable/disable and edit start/end times.</div>
+        <button type="button" id="copyMasterCalendarBtn" style="margin-top: 8px;">Copy master → custom</button>
+        <div style="margin-top: 10px;">
+          <div class="card" style="margin-top: 8px;">
+            <label><input type="checkbox" name="session_Asia" value="1" {% if sessions.get('Asia') %}checked{% endif %} /> Asia</label>
+            <div class="muted">Start/end in UTC (HH:MM). Example: 23:00–08:00 (wraps over midnight).</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+              <div>
+                <label>Start</label>
+                <input name="session_Asia_start" type="text" placeholder="23:00" value="{{ sess_times['Asia']['start'] }}" />
+              </div>
+              <div>
+                <label>End</label>
+                <input name="session_Asia_end" type="text" placeholder="08:00" value="{{ sess_times['Asia']['end'] }}" />
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 8px;">
+            <label><input type="checkbox" name="session_London" value="1" {% if sessions.get('London') %}checked{% endif %} /> London</label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+              <div>
+                <label>Start</label>
+                <input name="session_London_start" type="text" placeholder="07:00" value="{{ sess_times['London']['start'] }}" />
+              </div>
+              <div>
+                <label>End</label>
+                <input name="session_London_end" type="text" placeholder="16:00" value="{{ sess_times['London']['end'] }}" />
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 8px;">
+            <label><input type="checkbox" name="session_NewYork" value="1" {% if sessions.get('NewYork') %}checked{% endif %} /> NewYork</label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+              <div>
+                <label>Start</label>
+                <input name="session_NewYork_start" type="text" placeholder="13:00" value="{{ sess_times['NewYork']['start'] }}" />
+              </div>
+              <div>
+                <label>End</label>
+                <input name="session_NewYork_end" type="text" placeholder="21:00" value="{{ sess_times['NewYork']['end'] }}" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr />
+
+    <h3>Risk & limits</h3>
+    <div class="muted">Optional overrides for sizing, daily limits, and backtest costs. If you leave overrides off, TradingLab uses repo + market-profile defaults.</div>
+
+    {% set dist_unit = ad_labels.get('distance_unit') or 'ticks' %}
+    {% set bv = ad.get('backtest_validation') or {} %}
+    {% set hint_comm_rate = bv.get('commission_rate') %}
+    {% set hint_comm_cpc = bv.get('commission_per_contract') %}
+    {% set hint_slip = bv.get('slippage_ticks') if bv.get('slippage_ticks') is not none else bv.get('slippage_default') %}
+
+    <div class="muted" style="margin-top: 6px;">
+      Market hints:
+      {% if hint_comm_cpc is not none %}<strong>${{ hint_comm_cpc }}</strong>/contract/side{% elif hint_comm_rate is not none %}<strong>{{ hint_comm_rate }}</strong> commission rate{% else %}<strong>(commission: n/a)</strong>{% endif %}
+      · {% if hint_slip is not none %}<strong>{{ hint_slip }}</strong> {{ dist_unit }} slippage{% else %}<strong>(slippage: n/a)</strong>{% endif %}
+    </div>
+
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px;">
+      <div>
+        <label>Sizing mode</label>
+        {% set sm = (draft.get('sizing_mode') or 'account_size') %}
+        <select name="sizing_mode">
+          <option value="account_size" {% if sm == 'account_size' %}selected{% endif %}>Fixed (account size)</option>
+          <option value="daily_equity" {% if sm == 'daily_equity' %}selected{% endif %}>Compounded daily (end-of-day)</option>
+          <option value="equity" {% if sm == 'equity' %}selected{% endif %}>Compounded every trade (aggressive)</option>
+        </select>
+      </div>
+      <div>
+        <label>Account size ($)</label>
+        <input name="account_size" type="number" step="100" min="1" value="{{ draft.get('account_size') or 10000 }}" />
+      </div>
+      <div>
+        <label>Max trades per day</label>
+        <input name="max_trades_per_day" type="number" step="1" min="1" value="{{ draft.get('max_trades_per_day') or 1 }}" />
+      </div>
+      <div>
+        {% set mdl = draft.get('max_daily_loss_pct') %}
+        <label>
+          <input id="max_daily_loss_enabled" type="checkbox" name="max_daily_loss_enabled" value="1" {% if mdl is not none %}checked{% endif %} />
+          Enforce max daily loss
+        </label>
+        <label>Max daily loss (%)</label>
+        <input id="max_daily_loss_pct" name="max_daily_loss_pct" type="number" step="0.1" min="0.1" value="{% if mdl is not none %}{{ mdl }}{% else %}3.0{% endif %}" />
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Backtest costs (optional overrides)</strong>
+      <div class="muted">Leave overrides off to use market-profile costs.</div>
+
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 10px;">
+        <div>
+          {% set comm = draft.get('commissions') %}
+          <label>
+            <input id="override_commissions" type="checkbox" name="override_commissions" value="1" {% if comm is not none %}checked{% endif %} />
+            Override commissions
+          </label>
+          <label>Commissions (rate)</label>
+          <input id="commissions" name="commissions" type="number" step="0.000001" min="0" value="{% if comm is not none %}{{ comm }}{% endif %}" placeholder="e.g. 0.0004" />
+          <div class="muted">Example: <code>0.0004</code> = 0.04%. Futures usually use per-contract commission (profile-driven).</div>
+        </div>
+        <div>
+          {% set slip = draft.get('slippage_ticks') %}
+          <label>
+            <input id="override_slippage" type="checkbox" name="override_slippage" value="1" {% if slip is not none %}checked{% endif %} />
+            Override slippage
+          </label>
+          <label>Slippage ({{ dist_unit }})</label>
+          <input id="slippage_ticks" name="slippage_ticks" type="number" step="0.0001" min="0" value="{% if slip is not none %}{{ slip }}{% endif %}" placeholder="market default" />
+        </div>
+      </div>
+    </div>
+
+    <hr />
+
+    <h3>Stop loss</h3>
+    <div class="muted">Controls the initial stop loss used by the generated strategy.</div>
+
+    {% set separate = (draft.get('stop_separate') or false) %}
+    <div class="card" style="margin-top: 12px;">
+      <label>
+        <input type="checkbox" name="stop_separate" value="1" {% if separate %}checked{% endif %} />
+        Separate LONG and SHORT stop settings
+      </label>
+      <div class="muted">If unchecked, one stop config is applied to both sides.</div>
+    </div>
+
+    {% set shared_stop_type = (draft.get('stop_type') or 'atr') %}
+    {% set long_stop_type = (draft.get('long_stop_type') or shared_stop_type) %}
+    {% set short_stop_type = (draft.get('short_stop_type') or shared_stop_type) %}
+
+    {% set shared_ma_type = (draft.get('stop_ma_type') or 'ema') %}
+    {% set shared_ma_len = (draft.get('stop_ma_length') or 50) %}
+    {% set shared_buf = (draft.get('stop_buffer') if draft.get('stop_buffer') is not none else 0.0) %}
+    {% set shared_struct_lb = (draft.get('stop_structure_lookback_bars') or 20) %}
+    {% set shared_candle_back = (draft.get('stop_candle_bars_back') or 1) %}
+
+    {% set long_ma_type = (draft.get('long_stop_ma_type') or shared_ma_type) %}
+    {% set long_ma_len = (draft.get('long_stop_ma_length') or shared_ma_len) %}
+    {% set long_buf = (draft.get('long_stop_buffer') if draft.get('long_stop_buffer') is not none else shared_buf) %}
+    {% set long_struct_lb = (draft.get('long_stop_structure_lookback_bars') or shared_struct_lb) %}
+    {% set long_candle_back = (draft.get('long_stop_candle_bars_back') or shared_candle_back) %}
+    {% set long_stop_percent = (draft.get('long_stop_percent') if draft.get('long_stop_percent') is not none else (draft.get('stop_percent') or 0.02)) %}
+    {% set long_atr_len = (draft.get('long_atr_length') or (draft.get('atr_length') or 14)) %}
+    {% set long_atr_mult = (draft.get('long_atr_multiplier') if draft.get('long_atr_multiplier') is not none else (draft.get('atr_multiplier') or 3.0)) %}
+
+    {% set short_ma_type = (draft.get('short_stop_ma_type') or shared_ma_type) %}
+    {% set short_ma_len = (draft.get('short_stop_ma_length') or shared_ma_len) %}
+    {% set short_buf = (draft.get('short_stop_buffer') if draft.get('short_stop_buffer') is not none else shared_buf) %}
+    {% set short_struct_lb = (draft.get('short_stop_structure_lookback_bars') or shared_struct_lb) %}
+    {% set short_candle_back = (draft.get('short_stop_candle_bars_back') or shared_candle_back) %}
+    {% set short_stop_percent = (draft.get('short_stop_percent') if draft.get('short_stop_percent') is not none else (draft.get('stop_percent') or 0.02)) %}
+    {% set short_atr_len = (draft.get('short_atr_length') or (draft.get('atr_length') or 14)) %}
+    {% set short_atr_mult = (draft.get('short_atr_multiplier') if draft.get('short_atr_multiplier') is not none else (draft.get('atr_multiplier') or 3.0)) %}
+
+    <div id="stopSharedCard" class="card" style="margin-top: 12px;">
+      <strong>Stop settings (shared)</strong>
+      <label>Stop type</label>
+      <select name="stop_type" id="stop_type_shared">
+        <option value="atr" {% if shared_stop_type == 'atr' %}selected{% endif %}>ATR (recommended)</option>
+        <option value="percent" {% if shared_stop_type == 'percent' %}selected{% endif %}>Percent</option>
+        <option value="ma" {% if shared_stop_type == 'ma' %}selected{% endif %}>MA ± buffer (price units)</option>
+        <option value="structure" {% if shared_stop_type == 'structure' %}selected{% endif %}>Structure (Donchian) ± buffer</option>
+        <option value="candle" {% if shared_stop_type == 'candle' %}selected{% endif %}>Prior candle ± buffer</option>
+      </select>
+
+      <div class="stopFields" data-stop-for="shared" data-stop-type="atr" style="margin-top:10px; display:none;">
+        <label>ATR length</label>
+        <input name="atr_length" type="number" min="1" value="{{ draft.get('atr_length') or 14 }}" />
+        <label>ATR multiplier</label>
+        <input name="atr_multiplier" type="number" step="0.1" min="0.1" value="{{ draft.get('atr_multiplier') or 3.0 }}" />
+      </div>
+
+      <div class="stopFields" data-stop-for="shared" data-stop-type="percent" style="margin-top:10px; display:none;">
+        <label>Stop percent (fraction)</label>
+        <input name="stop_percent" type="number" step="0.001" min="0.001" value="{{ draft.get('stop_percent') or 0.02 }}" />
+        <div class="muted">Example: <code>0.02</code> = 2% stop.</div>
+      </div>
+
+      <div class="stopFields" data-stop-for="shared" data-stop-type="ma" style="margin-top:10px; display:none;">
+        <label>MA type</label>
+        <select name="stop_ma_type">
+          <option value="ema" {% if shared_ma_type == 'ema' %}selected{% endif %}>EMA</option>
+          <option value="sma" {% if shared_ma_type == 'sma' %}selected{% endif %}>SMA</option>
+        </select>
+        <label>MA length</label>
+        <input name="stop_ma_length" type="number" min="1" value="{{ shared_ma_len }}" />
+        <label>Buffer (price units)</label>
+        <input name="stop_buffer" type="number" step="0.0001" min="0" value="{{ shared_buf }}" />
+      </div>
+
+      <div class="stopFields" data-stop-for="shared" data-stop-type="structure" style="margin-top:10px; display:none;">
+        <label>Lookback bars</label>
+        <input name="stop_structure_lookback_bars" type="number" min="1" value="{{ shared_struct_lb }}" />
+        <label>Buffer (price units)</label>
+        <input name="stop_buffer" type="number" step="0.0001" min="0" value="{{ shared_buf }}" />
+      </div>
+
+      <div class="stopFields" data-stop-for="shared" data-stop-type="candle" style="margin-top:10px; display:none;">
+        <label>Bars back</label>
+        <input name="stop_candle_bars_back" type="number" min="1" value="{{ shared_candle_back }}" />
+        <label>Buffer (price units)</label>
+        <input name="stop_buffer" type="number" step="0.0001" min="0" value="{{ shared_buf }}" />
+      </div>
+    </div>
+
+    <div id="stopSeparateCard" class="card" style="margin-top: 12px; display:none;">
+      <strong>Stop settings (separate)</strong>
+
+      <div class="card" style="margin-top:10px;">
+        <strong>LONG stop</strong>
+        <label>Stop type</label>
+        <select name="long_stop_type" class="stopTypeSel" data-stop-for="long">
+          <option value="atr" {% if long_stop_type == 'atr' %}selected{% endif %}>ATR</option>
+          <option value="percent" {% if long_stop_type == 'percent' %}selected{% endif %}>Percent</option>
+          <option value="ma" {% if long_stop_type == 'ma' %}selected{% endif %}>MA − buffer (price units)</option>
+          <option value="structure" {% if long_stop_type == 'structure' %}selected{% endif %}>Structure low − buffer</option>
+          <option value="candle" {% if long_stop_type == 'candle' %}selected{% endif %}>Prior low − buffer</option>
+        </select>
+
+        <div class="stopFields" data-stop-for="long" data-stop-type="atr" style="margin-top:10px; display:none;">
+          <label>ATR length</label>
+          <input name="long_atr_length" type="number" min="1" value="{{ long_atr_len }}" />
+          <label>ATR multiplier</label>
+          <input name="long_atr_multiplier" type="number" step="0.1" min="0.1" value="{{ long_atr_mult }}" />
+        </div>
+        <div class="stopFields" data-stop-for="long" data-stop-type="percent" style="margin-top:10px; display:none;">
+          <label>Stop percent (fraction)</label>
+          <input name="long_stop_percent" type="number" step="0.001" min="0.001" value="{{ long_stop_percent }}" />
+        </div>
+        <div class="stopFields" data-stop-for="long" data-stop-type="ma" style="margin-top:10px; display:none;">
+          <label>MA type</label>
+          <select name="long_stop_ma_type">
+            <option value="ema" {% if long_ma_type == 'ema' %}selected{% endif %}>EMA</option>
+            <option value="sma" {% if long_ma_type == 'sma' %}selected{% endif %}>SMA</option>
+          </select>
+          <label>MA length</label>
+          <input name="long_stop_ma_length" type="number" min="1" value="{{ long_ma_len }}" />
+          <label>Buffer (price units)</label>
+          <input name="long_stop_buffer" type="number" step="0.0001" min="0" value="{{ long_buf }}" />
+        </div>
+        <div class="stopFields" data-stop-for="long" data-stop-type="structure" style="margin-top:10px; display:none;">
+          <label>Lookback bars</label>
+          <input name="long_stop_structure_lookback_bars" type="number" min="1" value="{{ long_struct_lb }}" />
+          <label>Buffer (price units)</label>
+          <input name="long_stop_buffer" type="number" step="0.0001" min="0" value="{{ long_buf }}" />
+        </div>
+        <div class="stopFields" data-stop-for="long" data-stop-type="candle" style="margin-top:10px; display:none;">
+          <label>Bars back</label>
+          <input name="long_stop_candle_bars_back" type="number" min="1" value="{{ long_candle_back }}" />
+          <label>Buffer (price units)</label>
+          <input name="long_stop_buffer" type="number" step="0.0001" min="0" value="{{ long_buf }}" />
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <strong>SHORT stop</strong>
+        <label>Stop type</label>
+        <select name="short_stop_type" class="stopTypeSel" data-stop-for="short">
+          <option value="atr" {% if short_stop_type == 'atr' %}selected{% endif %}>ATR</option>
+          <option value="percent" {% if short_stop_type == 'percent' %}selected{% endif %}>Percent</option>
+          <option value="ma" {% if short_stop_type == 'ma' %}selected{% endif %}>MA + buffer (price units)</option>
+          <option value="structure" {% if short_stop_type == 'structure' %}selected{% endif %}>Structure high + buffer</option>
+          <option value="candle" {% if short_stop_type == 'candle' %}selected{% endif %}>Prior high + buffer</option>
+        </select>
+
+        <div class="stopFields" data-stop-for="short" data-stop-type="atr" style="margin-top:10px; display:none;">
+          <label>ATR length</label>
+          <input name="short_atr_length" type="number" min="1" value="{{ short_atr_len }}" />
+          <label>ATR multiplier</label>
+          <input name="short_atr_multiplier" type="number" step="0.1" min="0.1" value="{{ short_atr_mult }}" />
+        </div>
+        <div class="stopFields" data-stop-for="short" data-stop-type="percent" style="margin-top:10px; display:none;">
+          <label>Stop percent (fraction)</label>
+          <input name="short_stop_percent" type="number" step="0.001" min="0.001" value="{{ short_stop_percent }}" />
+        </div>
+        <div class="stopFields" data-stop-for="short" data-stop-type="ma" style="margin-top:10px; display:none;">
+          <label>MA type</label>
+          <select name="short_stop_ma_type">
+            <option value="ema" {% if short_ma_type == 'ema' %}selected{% endif %}>EMA</option>
+            <option value="sma" {% if short_ma_type == 'sma' %}selected{% endif %}>SMA</option>
+          </select>
+          <label>MA length</label>
+          <input name="short_stop_ma_length" type="number" min="1" value="{{ short_ma_len }}" />
+          <label>Buffer (price units)</label>
+          <input name="short_stop_buffer" type="number" step="0.0001" min="0" value="{{ short_buf }}" />
+        </div>
+        <div class="stopFields" data-stop-for="short" data-stop-type="structure" style="margin-top:10px; display:none;">
+          <label>Lookback bars</label>
+          <input name="short_stop_structure_lookback_bars" type="number" min="1" value="{{ short_struct_lb }}" />
+          <label>Buffer (price units)</label>
+          <input name="short_stop_buffer" type="number" step="0.0001" min="0" value="{{ short_buf }}" />
+        </div>
+        <div class="stopFields" data-stop-for="short" data-stop-type="candle" style="margin-top:10px; display:none;">
+          <label>Bars back</label>
+          <input name="short_stop_candle_bars_back" type="number" min="1" value="{{ short_candle_back }}" />
+          <label>Buffer (price units)</label>
+          <input name="short_stop_buffer" type="number" step="0.0001" min="0" value="{{ short_buf }}" />
+        </div>
+      </div>
+    </div>
+
+    <h3>Trade management</h3>
+    <div class="muted">By default, this uses the repo master trade management. Only set overrides if you intentionally want different behavior.</div>
+
+    {% set tp_ladders = (ad.get('trade_management') or {}).get('tp_ladders') or {} %}
+    {% set partial_ladders = (ad.get('trade_management') or {}).get('partial_ladders') or {} %}
+
+    <details class="card" style="margin-top: 12px;">
+      <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
+      <div style="margin-top: 10px;" class="muted">
+        Take profit: enabled={{ mtm['take_profit']['enabled'] }}, target_r={{ mtm['take_profit']['target_r'] }}, exit_pct={{ mtm['take_profit']['exit_pct'] }}<br />
+        Partial exit: enabled={{ mtm['partial_exit']['enabled'] }}, level_r={{ mtm['partial_exit']['level_r'] }}, exit_pct={{ mtm['partial_exit']['exit_pct'] }}<br />
+        Trailing stop: enabled={{ mtm['trailing_stop']['enabled'] }}, length={{ mtm['trailing_stop']['length'] }}, activation_r={{ mtm['trailing_stop']['activation_r'] }}, stepped={{ mtm['trailing_stop']['stepped'] }}, min_move_pips={{ mtm['trailing_stop']['min_move_pips'] }}
+      </div>
+    </details>
+
+    {% set tp_mode = draft.get('tm_tp_mode') or 'master' %}
+    {% set tp_levels = draft.get('tm_tp_levels') or [] %}
+    {% set tp_template = draft.get('tm_tp_template') or (tp_ladders.keys()|list|first) %}
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Take profit</strong>
+      <label>
+        <input type="radio" name="tp_mode" value="master" {% if tp_mode == 'master' %}checked{% endif %} />
+        Use master defaults (recommended)
+      </label>
+      <label>
+        <input type="radio" name="tp_mode" value="disable" {% if tp_mode == 'disable' %}checked{% endif %} />
+        Disable take profit
+      </label>
+      <label>
+        <input type="radio" name="tp_mode" value="custom" {% if tp_mode == 'custom' %}checked{% endif %} />
+        Custom (multi-level)
+      </label>
+
+      <div id="tp_custom" style="margin-top: 10px; display: none;">
+        <button type="button" id="copyMasterTpBtn" style="margin-bottom: 8px;">Copy master → custom</button>
+
+        <div class="muted">Define up to 3 take-profit levels. Exit % totals should be ≤ 100.</div>
+
+        <label>Template (prefill)</label>
+        <select name="tp_template">
+          {% if tp_ladders and tp_ladders|length > 0 %}
+            {% for k in tp_ladders.keys() %}
+              <option value="{{ k }}" {% if k == tp_template %}selected{% endif %}>{{ k }}</option>
+            {% endfor %}
+          {% else %}
+            <option value="" selected>(none)</option>
+          {% endif %}
+        </select>
+
+        {% set tpl_levels = ((tp_ladders.get(tp_template) or {}).get('levels') or []) if tp_template else [] %}
+
+        {% for i in [1,2,3] %}
+          {% set li = i - 1 %}
+          {% set lvl = (tp_levels[li] if (tp_levels|length > li) else (tpl_levels[li] if (tpl_levels|length > li) else None)) %}
+          {% set lvl_enabled = (lvl and (lvl.get('enabled', True))) if lvl is not none else (true if i == 1 else false) %}
+          {% set lvl_tr = (lvl.get('target_r') if lvl is not none else (mtm['take_profit']['target_r'] if i == 1 else '')) %}
+          {% set lvl_ep = (lvl.get('exit_pct') if lvl is not none else (mtm['take_profit']['exit_pct'] if i == 1 else '')) %}
+          <div class="card" style="margin-top: 8px;">
+            <label>
+              <input type="checkbox" name="tp{{ i }}_enabled" value="1" {% if lvl_enabled %}checked{% endif %} />
+              Level {{ i }}
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+              <div>
+                <label>Target R</label>
+                <input name="tp{{ i }}_target_r" type="number" step="0.1" min="0.1" value="{{ lvl_tr }}" />
+              </div>
+              <div>
+                <label>Exit %</label>
+                <input name="tp{{ i }}_exit_pct" type="number" step="1" min="1" max="100" value="{{ lvl_ep }}" />
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Partial exit</strong>
+      {% set pe_enabled = draft.get('tm_partial_enabled') or False %}
+      {% set pe_levels = draft.get('tm_partial_levels') or [] %}
+      {% set pe_template = draft.get('tm_partial_template') or (partial_ladders.keys()|list|first) %}
+      <label>
+        <input type="checkbox" name="partial_enabled" value="1" {% if pe_enabled %}checked{% endif %} />
+        Enable partial exits
+      </label>
+      <div id="partial_fields" style="margin-top: 10px; display: none;">
+        <button type="button" id="copyMasterPartialBtn" style="margin-bottom: 8px;">Copy master values</button>
+
+        <div class="muted">Define up to 2 partial-exit levels. Exit % totals should be ≤ 100.</div>
+
+        <label>Template (prefill)</label>
+        <select name="partial_template">
+          {% if partial_ladders and partial_ladders|length > 0 %}
+            {% for k in partial_ladders.keys() %}
+              <option value="{{ k }}" {% if k == pe_template %}selected{% endif %}>{{ k }}</option>
+            {% endfor %}
+          {% else %}
+            <option value="" selected>(none)</option>
+          {% endif %}
+        </select>
+
+        {% set pe_tpl_levels = ((partial_ladders.get(pe_template) or {}).get('levels') or []) if pe_template else [] %}
+
+        {% for i in [1,2] %}
+          {% set li = i - 1 %}
+          {% set lvl = (pe_levels[li] if (pe_levels|length > li) else (pe_tpl_levels[li] if (pe_tpl_levels|length > li) else None)) %}
+          {% set lvl_enabled = (lvl and (lvl.get('enabled', True))) if lvl is not none else (true if i == 1 else false) %}
+          {% set lvl_lr = (lvl.get('level_r') if lvl is not none else (mtm['partial_exit']['level_r'] if i == 1 else '')) %}
+          {% set lvl_ep = (lvl.get('exit_pct') if lvl is not none else (mtm['partial_exit']['exit_pct'] if i == 1 else '')) %}
+          <div class="card" style="margin-top: 8px;">
+            <label>
+              <input type="checkbox" name="partial{{ i }}_enabled" value="1" {% if lvl_enabled %}checked{% endif %} />
+              Level {{ i }}
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+              <div>
+                <label>Level R</label>
+                <input name="partial{{ i }}_level_r" type="number" step="0.1" min="0.1" value="{{ lvl_lr }}" />
+              </div>
+              <div>
+                <label>Exit %</label>
+                <input name="partial{{ i }}_exit_pct" type="number" step="1" min="1" max="100" value="{{ lvl_ep }}" />
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+
+        {# Back-compat hidden fields for older submit handler versions #}
+        <input type="hidden" name="partial_level_r" value="{{ draft.get('tm_partial_level_r') or mtm['partial_exit']['level_r'] }}" />
+        <input type="hidden" name="partial_exit_pct" value="{{ draft.get('tm_partial_exit_pct') or mtm['partial_exit']['exit_pct'] }}" />
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Trailing stop</strong>
+      {% set ts_enabled = draft.get('tm_trailing_enabled') or False %}
+      <label>
+        <input type="checkbox" name="trailing_enabled" value="1" {% if ts_enabled %}checked{% endif %} />
+        Enable trailing stop (EMA)
+      </label>
+      <div id="trailing_fields" style="margin-top: 10px; display: none;">
+        <button type="button" id="copyMasterTrailingBtn" style="margin-bottom: 8px;">Copy master values</button>
+        <label>EMA length</label>
+        <input name="trailing_length" type="number" min="1" value="{{ draft.get('tm_trailing_length') or mtm['trailing_stop']['length'] }}" />
+        <label>Activation R</label>
+        <input name="trailing_activation_r" type="number" step="0.1" min="0" value="{{ draft.get('tm_trailing_activation_r') or mtm['trailing_stop']['activation_r'] }}" />
+        <label>
+          <input type="checkbox" name="trailing_stepped" value="1" {% if draft.get('tm_trailing_stepped', True) %}checked{% endif %} />
+          Stepped trailing
+        </label>
+        <label>Min move (pips)</label>
+        <input name="trailing_min_move_pips" type="number" step="0.1" min="0" value="{{ draft.get('tm_trailing_min_move_pips') or mtm['trailing_stop']['min_move_pips'] }}" />
+      </div>
+    </div>
+
+    <hr />
+
+    <h3>Execution</h3>
+    <div class="muted">Optional early-exit behavior when the context (regime) filter stops being valid.</div>
+
+    {% set exec_defaults = (ad.get('execution') or {}) %}
+    {% set exit_ctx_def = (exec_defaults.get('exit_if_context_invalid') or {}) %}
+    {% set exit_ctx_enabled_default = exit_ctx_def.get('enabled_default') if exit_ctx_def.get('enabled_default') is not none else false %}
+    {% set exit_ctx_mode_default = exit_ctx_def.get('mode_default') or 'immediate' %}
+    {% set exit_ctx_enabled = (draft.get('exit_ctx_enabled') if draft.get('exit_ctx_enabled') is not none else exit_ctx_enabled_default) %}
+    {% set exit_ctx_mode = (draft.get('exit_ctx_mode') or exit_ctx_mode_default) %}
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Exit if context invalidates</strong>
+      <label>
+        <input type="checkbox" name="exit_ctx_enabled" value="1" {% if exit_ctx_enabled %}checked{% endif %} />
+        Enable context invalidation handling
+      </label>
+      <div class="muted">If enabled, the generated strategy can exit immediately or tighten the stop when context flips from true → false.</div>
+      <div class="muted" style="margin-top: 6px;">
+        Current: {% if exit_ctx_enabled %}<strong>{{ exit_ctx_mode }}</strong>{% else %}<strong>disabled</strong>{% endif %}
+      </div>
+      <div id="exitCtxFields" style="margin-top: 10px; display: none;">
+        <label>Mode</label>
+        <select name="exit_ctx_mode">
+          <option value="immediate" {% if exit_ctx_mode == 'immediate' %}selected{% endif %}>Immediate exit</option>
+          <option value="tighten_stop" {% if exit_ctx_mode == 'tighten_stop' %}selected{% endif %}>Tighten stop (no instant close)</option>
+        </select>
+      </div>
+    </div>
+
+    {% if error %}
+      <div class="card card-error" style="margin-top: 12px;">{{ error }}</div>
+    {% endif %}
+
+    <div style="margin-top: 10px;">
+      <a href="/create-strategy-guided/step4?draft_id={{ draft_id }}">Back</a>
+    </div>
+
+    <button type="submit" name="action" value="skip">Skip (use defaults) → Review</button>
+    <button class="primary" type="submit" name="action" value="save">Save → Review</button>
+  </form>
+
+  <div
+    id="masterDefaults"
+    style="display:none;"
+    data-allowed-days="{{ mc['allowed_days']|join(',') }}"
+    data-session-asia-enabled="{{ 1 if mc['sessions']['Asia']['enabled'] else 0 }}"
+    data-session-london-enabled="{{ 1 if mc['sessions']['London']['enabled'] else 0 }}"
+    data-session-newyork-enabled="{{ 1 if mc['sessions']['NewYork']['enabled'] else 0 }}"
+    data-session-asia-start="{{ mc['sessions']['Asia']['start'] }}"
+    data-session-asia-end="{{ mc['sessions']['Asia']['end'] }}"
+    data-session-london-start="{{ mc['sessions']['London']['start'] }}"
+    data-session-london-end="{{ mc['sessions']['London']['end'] }}"
+    data-session-newyork-start="{{ mc['sessions']['NewYork']['start'] }}"
+    data-session-newyork-end="{{ mc['sessions']['NewYork']['end'] }}"
+    data-tp-enabled="{{ 1 if mtm['take_profit']['enabled'] else 0 }}"
+    data-tp-target-r="{{ mtm['take_profit']['target_r'] }}"
+    data-tp-exit-pct="{{ mtm['take_profit']['exit_pct'] }}"
+    data-partial-enabled="{{ 1 if mtm['partial_exit']['enabled'] else 0 }}"
+    data-partial-level-r="{{ mtm['partial_exit']['level_r'] }}"
+    data-partial-exit-pct="{{ mtm['partial_exit']['exit_pct'] }}"
+    data-trailing-enabled="{{ 1 if mtm['trailing_stop']['enabled'] else 0 }}"
+    data-trailing-length="{{ mtm['trailing_stop']['length'] }}"
+    data-trailing-activation-r="{{ mtm['trailing_stop']['activation_r'] }}"
+    data-trailing-stepped="{{ 1 if mtm['trailing_stop']['stepped'] else 0 }}"
+    data-trailing-min-move-pips="{{ mtm['trailing_stop']['min_move_pips'] }}"
+  ></div>
+
+  <script src="/static/js/guided_step5_advanced.js"></script>
+{% endblock %}

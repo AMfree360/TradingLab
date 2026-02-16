@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Redirecting…</h2>
+
+  <div class="card">
+    <div>{{ message or 'Continuing to the next step…' }}</div>
+    <div class="muted" style="margin-top: 8px;">
+      If nothing happens, use this link: <a href="{{ url }}">Continue</a>
+    </div>
+  </div>
+
+  <meta http-equiv="refresh" content="0; url={{ url }}" />
+  <div id="redirectData" data-url="{{ url }}" style="display:none;"></div>
+  <script src="/static/js/guided_redirect.js"></script>
+{% endblock %}

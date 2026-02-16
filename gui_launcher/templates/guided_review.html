@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Review</h2>
+
+  {% if message %}
+    <div class="card">
+      <div class="muted"><strong>{{ message }}</strong></div>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <div><strong>Name:</strong> {{ draft.name }}</div>
+    {% if draft and draft.get('edit_mode') %}
+      <div class="muted" style="margin-top: 8px;"><strong>Edit mode:</strong> saving will overwrite this strategy spec in research_specs/ (use a versioned name if you want to keep the old one).</div>
+    {% elif draft and draft.get('version_parent') %}
+      <div class="muted" style="margin-top: 8px;"><strong>Versioned from:</strong> {{ draft.get('version_parent') }}</div>
+    {% endif %}
+    <div><strong>Market:</strong> {{ draft.exchange }} / {{ draft.symbol }} ({{ draft.market_type }})</div>
+    <div><strong>Entry TF:</strong> {{ draft.entry_tf }}</div>
+    <div><strong>Holding:</strong> {{ draft.holding_style or 'intraday' }}{% if draft.flatten_enabled %} (flatten {{ draft.flatten_time or '21:30' }} UTC){% endif %}</div>
+
+    {% if draft and draft.get('exit_ctx_enabled') %}
+      {% set _exit_mode = (draft.get('exit_ctx_mode') or 'immediate') %}
+      <div class="muted" style="margin-top: 8px;">
+        <strong>Context invalidation:</strong>
+        {% if _exit_mode == 'tighten_stop' %}
+          Tighten stop (no instant close) — when context flips true → false, the strategy will emit a tighten-stop intent so the engine can reduce risk; the position stays open until a normal exit (stop/TP/other exit signal).
+        {% else %}
+          Immediate exit — when context flips true → false, the strategy will emit an exit intent and the engine will close the position.
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Generated spec (YAML)</h3>
+    <pre style="max-height: 520px; overflow: auto;">{{ yaml_text }}</pre>
+
+    <form method="post" action="/create-strategy-guided/run">
+      <input type="hidden" name="draft_id" value="{{ draft_id }}" />
+      <label>{% if draft and draft.get('edit_mode') %}Edit reason (optional){% else %}Change note (optional){% endif %}</label>
+      <textarea name="edit_reason" rows="2" placeholder="e.g. tighten trigger, relax context, fix typo">{{ draft.get('edit_reason') if draft else '' }}</textarea>
+      {% if draft and draft.get('edit_mode') %}
+        <label>
+          <input type="checkbox" name="save_as_new_version" {% if draft.get('save_as_new_version') %}checked{% endif %} />
+          Save as new version (keep original)
+        </label>
+      {% endif %}
+      <label>
+        <input type="checkbox" name="compile_strategy" checked />
+        Compile into strategies/&lt;name&gt;/
+      </label>
+      <button class="primary" type="submit">{% if draft and draft.get('edit_mode') %}Save + Compile{% else %}Create + Compile{% endif %}</button>
+    </form>
+  </div>
+{% endblock %}

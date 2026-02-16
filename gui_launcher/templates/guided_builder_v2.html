@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
+  <h2>Step 4 — Context (Regime) + Trigger</h2>
+
+  <form id="guided_step4_form" action="/create-strategy-guided/step4" method="post" novalidate>
+    {% if csrf_token %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    {% endif %}
+    <input type="hidden" name="draft_id" id="draft_id" value="{{ (draft.get('draft_id') or draft.get('id') or '') }}" />
+    <input type="hidden" name="builder_mode" value="v2" />
+
+    <input type="hidden" name="context_rules_json" id="context_rules_json" value='{{ (draft.get("context_rules") or []) | tojson }}' />
+    <input type="hidden" name="signal_rules_json" id="signal_rules_json" value='{{ (draft.get("signal_rules") or []) | tojson }}' />
+    <input type="hidden" name="trigger_rules_json" id="trigger_rules_json" value='{{ (draft.get("trigger_rules") or []) | tojson }}' />
+
+    {% if not draft.symbol %}
+      <label>Instrument (custom)</label>
+      <input name="symbol" type="text" placeholder="e.g. BTCUSDT" required />
+    {% else %}
+      <input type="hidden" name="symbol" value="{{ draft.symbol }}" />
+    {% endif %}
+
+    <label>
+      <input type="checkbox" name="long_enabled" {% if draft.long_enabled %}checked{% endif %} />
+      Enable LONG
+    </label>
+
+    <label>
+      <input type="checkbox" name="short_enabled" {% if draft.short_enabled %}checked{% endif %} />
+      Enable SHORT
+    </label>
+
+    <hr />
+
+    <h3>Risk</h3>
+    <div class="muted">Used for position sizing in backtests/live (risk per trade, as % of account).</div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+      <div>
+        <label>Risk per trade (%)</label>
+        <input name="risk_per_trade_pct" type="number" step="0.1" min="0.01" value="{{ draft.get('risk_per_trade_pct') or 1.0 }}" />
+      </div>
+    </div>
+
+    <hr />
+
+    <h3>Timeframes</h3>
+    <div class="muted">Choose the entry timeframe for execution and previews. Context timeframe is optional (higher timeframe regime).</div>
+
+    <label>Entry timeframe (execution TF)</label>
+    {% set tf = draft.get('entry_tf') or '1h' %}
+    <input name="entry_tf" list="tf-options" value="{{ tf }}" />
+    <datalist id="tf-options">
+      <option value="1m"></option>
+      <option value="5m"></option>
+      <option value="15m"></option>
+      <option value="1h"></option>
+      <option value="4h"></option>
+      <option value="1d"></option>
+    </datalist>
+    <div class="muted" style="margin-top:6px;">Entry timeframe is the execution timeframe used for candles, plotting, and order timing. Signals and Triggers may be defined on different timeframes; when a signal/trigger has its own timeframe it will be evaluated on that timeframe and aligned to the Entry timeframe for execution and preview.</div>
+    <div style="margin-top:8px;">
+      <label><input type="checkbox" id="use_entry_tf_for_all" name="use_entry_tf_for_all" /> Use Entry TF for all Signals &amp; Triggers</label>
+      <div class="muted" style="margin-top:4px;">When checked, new and existing Signal/Trigger rows will be auto-filled with the Entry timeframe and their timeframe selector will be locked.</div>
+    </div>
+
+    <label>Context timeframe (optional)</label>
+    {% set ctf = draft.get('context_tf') or '' %}
+    <input name="context_tf" list="tf-options" value="{{ ctf }}" placeholder="(leave blank to use entry TF)" />
+
+    <label>
+      <input type="checkbox" name="align_with_context" {% if draft.get('align_with_context') %}checked{% endif %} />
+      Align direction with context (LONG only if bull context, SHORT only if bear context)
+    </label>
+    <div class="muted">If both LONG + SHORT are enabled, alignment applies bullish regime rules to LONG and bearish regime rules to SHORT automatically.</div>
+
+    <hr />
+    <h3>Context (Regime)</h3>
+    <div class="muted">Define regime/context rules used to filter trades. Rules are serialized into <code>context_rules_json</code>.</div>
+    <div style="margin-top:8px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+      <label>Primary context type</label>
+      <select id="primary_context_type" name="primary_context_type">
+        <option value="none" {% if (draft.get('primary_context_type') or 'none') == 'none' %}selected{% endif %}>None (choose)</option>
+        <option value="ma_stack" {% if (draft.get('primary_context_type') or 'none') == 'ma_stack' %}selected{% endif %}>MA stack</option>
+        <option value="price_vs_ma" {% if draft.get('primary_context_type') == 'price_vs_ma' %}selected{% endif %}>Price vs MA</option>
+        <option value="ma_cross_state" {% if draft.get('primary_context_type') == 'ma_cross_state' %}selected{% endif %}>MA cross state</option>
+        <option value="atr_pct" {% if draft.get('primary_context_type') == 'atr_pct' %}selected{% endif %}>ATR %</option>
+        <option value="structure_breakout_state" {% if draft.get('primary_context_type') == 'structure_breakout_state' %}selected{% endif %}>Structure breakout</option>
+        <option value="ma_spread_pct" {% if draft.get('primary_context_type') == 'ma_spread_pct' %}selected{% endif %}>MA spread %</option>
+        <option value="custom" {% if draft.get('primary_context_type') == 'custom' %}selected{% endif %}>Custom (DSL)</option>
+      </select>
+
+      <!-- MA-stack is rendered dynamically by guided_builder_v2.js when a context row of type `ma_stack` is present. -->
+
+      <button type="button" id="add-context">Add Context Rule</button>
+    </div>
+    <!-- Global tips moved into per-row help panels to reduce clutter. -->
+    <div id="context-rules" style="margin-top:10px;"></div>
+
+    <div class="card" id="context-visual-card" style="margin-top:12px;">
+      <h4>Context visual</h4>
+      <div class="muted">Shows the selected regime overlay on the price series.</div>
+      <div id="context-visual-message" class="muted" style="margin-top:6px;"></div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button type="button" id="reload-context-visual">Reload Context Visual</button>
+      </div>
+      <div id="context-visual" style="height:320px;"></div>
+    </div>
+
+    <hr />
+    <h3>Signals</h3>
+    <div class="muted">Define signals used by the strategy. Signals are serialized into <code>signal_rules_json</code>.</div>
+    <div class="muted" style="margin-top:6px;">Each Signal row includes a Timeframe field. If blank the Entry timeframe will be used.</div>
+    <div style="margin-top:8px;">
+      <button type="button" id="add-signal">Add Signal</button>
+    </div>
+    <div id="signal-rules" style="margin-top:10px;"></div>
+
+    <hr />
+    <h3>Trigger (Entry)</h3>
+    <div class="muted">Define entry triggers. Triggers are serialized into <code>trigger_rules_json</code>.</div>
+    <div class="muted" style="margin-top:6px;">Each Trigger row includes a Timeframe field. If blank the Entry timeframe will be used.</div>
+    <div style="margin-top:8px;">
+      
+
+      <div id="trigger_pin_bar" style="margin-top:8px; display:none;">
+        <label>Pin wick/body ratio</label>
+        <input name="pin_wick_body" type="number" step="0.1" value="{{ draft.get('pin_wick_body') or 2.0 }}" />
+        <label>Opposite wick/body max</label>
+        <input name="pin_opp_wick_body_max" type="number" step="0.1" value="{{ draft.get('pin_opp_wick_body_max') or 1.0 }}" />
+        <label>Min body % of range</label>
+        <input name="pin_min_body_pct" type="number" step="0.01" value="{{ draft.get('pin_min_body_pct') or 0.2 }}" />
+      </div>
+
+      <div id="trigger_ma_reclaim" style="margin-top:8px; display:none;">
+        <label>Trigger MA type</label>
+        <select name="trigger_ma_type">
+          <option value="ema" {% if (draft.get('trigger_ma_type') or 'ema') == 'ema' %}selected{% endif %}>EMA</option>
+          <option value="sma" {% if draft.get('trigger_ma_type') == 'sma' %}selected{% endif %}>SMA</option>
+        </select>
+        <label>Trigger MA len</label>
+        <input name="trigger_ma_len" type="number" min="1" value="{{ draft.get('trigger_ma_len') or 20 }}" />
+      </div>
+
+      <div id="trigger_donchian" style="margin-top:8px; display:none;">
+        <label>Donchian length</label>
+        <input name="trigger_don_len" type="number" min="1" value="{{ draft.get('trigger_don_len') or 20 }}" />
+      </div>
+
+      <div id="trigger_range" style="margin-top:8px; display:none;">
+        <label>Range length</label>
+        <input name="trigger_range_len" type="number" min="1" value="{{ draft.get('trigger_range_len') or 20 }}" />
+      </div>
+
+      <div id="trigger_wide_range" style="margin-top:8px; display:none;">
+        <label>ATR length</label>
+        <input name="trigger_atr_len" type="number" min="1" value="{{ draft.get('trigger_atr_len') or 14 }}" />
+        <label>ATR mult</label>
+        <input name="trigger_atr_mult" type="number" step="0.1" value="{{ draft.get('trigger_atr_mult') or 2.0 }}" />
+      </div>
+
+      <div id="trigger_custom" style="margin-top:8px; display:none;">
+        <label>Trigger custom bull expr</label>
+        <textarea name="trigger_custom_bull_expr" rows="2">{{ draft.get('trigger_custom_bull_expr') or '' }}</textarea>
+        <label>Trigger custom bear expr</label>
+        <textarea name="trigger_custom_bear_expr" rows="2">{{ draft.get('trigger_custom_bear_expr') or '' }}</textarea>
+      </div>
+
+      <button type="button" id="add-trigger">Add Trigger Rule</button>
+    </div>
+    <div id="trigger-rules" style="margin-top:10px;"></div>
+
+    <div class="card" id="setup-visual-card" style="margin-top: 12px;">
+      <h4>Setup visual (preview)</h4>
+      <div class="muted">Visual preview of the current setup; shows entries, stops and regime overlays.</div>
+      <div id="setup-visual-message" class="muted" style="margin-top:6px;"></div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button type="button" id="reload-setup-visual">Reload Setup Visual</button>
+      </div>
+      <div id="setup-visual" style="height:360px;"></div>
+    </div>
+
+    <h3>Effective rules (preview)</h3>
+    <div class="card" id="effective-preview">
+      <div class="muted" style="margin-bottom:10px;">
+        Shows what will be generated for LONG/SHORT from this step (context + trigger).
+      </div>
+      <div id="effective-preview-body">
+        {% if preview %}
+          <div class="muted" style="margin-bottom:10px;">
+            Context TF: <strong>{{ preview.context_tf }}</strong>. Entry TF: <strong>{{ preview.entry_tf }}</strong>.
+            Signals TF: <strong>{{ preview.signal_tf }}</strong>. Triggers TF: <strong>{{ preview.trigger_tf }}</strong>.
+          </div>
+        {% else %}
+          <div class="muted">Preview unavailable.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if error %}
+      <div class="card card-error" style="margin-top: 12px;">{{ error }}</div>
+    {% endif %}
+
+    <div style="margin-top:12px; display:flex; gap:8px; align-items:center;">
+      <button type="button" id="preview-now" class="secondary">Preview</button>
+    </div>
+
+    <div id="guided-debug" style="margin-top:12px; padding:8px; background:#f9f9f9; border:1px solid #eee; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:160px; overflow:auto;"></div>
+
+    <!-- Setup visual temporarily disabled for debugging -->
+    <!--
+    <div class="card" id="setup-visual-card" style="margin-top: 12px;">
+      <h4>Setup visual (preview)</h4>
+      ... setup visual removed for diagnosis ...
+    </div>
+    -->
+
+    <button class="primary" type="submit">Review</button>
+  </form>
+
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <script src="/static/js/guided_builder_v2_model.js"></script>
+  <script src="/static/js/guided_builder_v2_state.js"></script>
+  <script src="/static/js/guided_builder_v2_dom.js"></script>
+  <script src="/static/js/guided_builder_v2.js"></script>
+  <script>
+    // Fallback wiring: ensure preview/reload buttons call preview helpers
+    document.addEventListener('DOMContentLoaded', function () {
+      function safeBuild() {
+        try { return (window._guided_builder_v2_test && window._guided_builder_v2_test.buildPayload) ? window._guided_builder_v2_test.buildPayload() : null; } catch (e) { console.log('buildPayload missing', e); return null; }
+      }
+
+      async function fallback_preview(payload) {
+        try {
+          const form = document.querySelector('form#guided_step4_form') || document.querySelector('form[action="/create-strategy-guided/step4"]');
+          if (!payload) {
+            // build minimal payload from form/hidden inputs
+            payload = {};
+            payload.draft_id = (document.getElementById('draft_id') || {}).value || null;
+            payload.symbol = (form && form.querySelector('[name="symbol"]') && form.querySelector('[name="symbol"]').value) || null;
+            payload.entry_tf = (form && form.querySelector('[name="entry_tf"]') && form.querySelector('[name="entry_tf"]').value) || '';
+            payload.context_tf = (form && form.querySelector('[name="context_tf"]') && form.querySelector('[name="context_tf"]').value) || '';
+            // derive signal/trigger timeframes from per-row rules if available
+            payload.signal_tf = '';
+            try {
+              if (Array.isArray(payload.signal_rules) && payload.signal_rules.length) {
+                for (const r of payload.signal_rules) { if (r && r.tf) { payload.signal_tf = r.tf; break; } }
+              }
+            } catch (e) { payload.signal_tf = ''; }
+
+            payload.trigger_tf = '';
+            try {
+              if (Array.isArray(payload.trigger_rules) && payload.trigger_rules.length) {
+                for (const r of payload.trigger_rules) { if (r && r.tf) { payload.trigger_tf = r.tf; break; } }
+              }
+            } catch (e) { payload.trigger_tf = ''; }
+            payload.align_with_context = !!(form && form.querySelector('[name="align_with_context"]') && form.querySelector('[name="align_with_context"]').checked);
+            payload.long_enabled = !!(form && form.querySelector('[name="long_enabled"]') && form.querySelector('[name="long_enabled"]').checked);
+            payload.short_enabled = !!(form && form.querySelector('[name="short_enabled"]') && form.querySelector('[name="short_enabled"]').checked);
+            payload.primary_context_type = (document.getElementById('primary_context_type') || {}).value || '';
+            try { payload.context_rules = JSON.parse((document.getElementById('context_rules_json') || {}).value || '[]'); } catch (e) { payload.context_rules = []; }
+            try { payload.signal_rules = JSON.parse((document.getElementById('signal_rules_json') || {}).value || '[]'); } catch (e) { payload.signal_rules = []; }
+            try { payload.trigger_rules = JSON.parse((document.getElementById('trigger_rules_json') || {}).value || '[]'); } catch (e) { payload.trigger_rules = []; }
+          }
+
+          const dbg = document.getElementById('guided-debug'); if (dbg) dbg.textContent = 'Fallback preview running...\n' + (dbg.textContent || '');
+
+          // update Effective rules box immediately
+          try {
+            const bodyEl = document.getElementById('effective-preview-body');
+            if (bodyEl) {
+              const ctxTf = payload.context_tf || '(entry)';
+              const entryTf = payload.entry_tf || '(entry)';
+              const sigTf = payload.signal_tf || '(entry)';
+              const trgTf = payload.trigger_tf || '(entry)';
+              bodyEl.innerHTML = `<div class="muted" style="margin-bottom:10px;">Context TF: <strong>${ctxTf}</strong>. Entry TF: <strong>${entryTf}</strong>. Signals TF: <strong>${sigTf}</strong>. Triggers TF: <strong>${trgTf}</strong>.</div>`;
+            }
+          } catch (e) { console.log('effective render failed', e); }
+
+          // fetch and render context visual
+          try {
+            const res = await fetch('/api/guided/builder_v2/context_visual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const out = await res.json();
+            if (out && out.ok && out.fig && out.fig.data && out.fig.layout && window.Plotly) {
+              await window.Plotly.react(document.getElementById('context-visual'), out.fig.data, out.fig.layout, { displayModeBar: false, responsive: true });
+            } else if (res && !res.ok) {
+              console.log('context_visual fetch failed', res.status);
+            }
+          } catch (e) { console.log('context visual fetch/render failed', e); }
+
+          // fetch and render setup visual
+          try {
+            const res2 = await fetch('/api/guided/builder_v2/setup_visual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const out2 = await res2.json();
+            if (out2 && out2.ok && out2.fig && out2.fig.data && out2.fig.layout && window.Plotly) {
+              await window.Plotly.react(document.getElementById('setup-visual'), out2.fig.data, out2.fig.layout, { displayModeBar: false, responsive: true });
+            } else if (res2 && !res2.ok) {
+              console.log('setup_visual fetch failed', res2.status);
+            }
+          } catch (e) { console.log('setup visual fetch/render failed', e); }
+
+        } catch (e) { console.log('fallback_preview error', e); }
+      }
+      const preview = document.getElementById('preview-now');
+      if (preview) preview.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        const payload = safeBuild();
+        try {
+          if (window._guided_builder_v2_test && window._guided_builder_v2_test.updateContextVisual) {
+            window._guided_builder_v2_test.updateContextVisual(payload, { force: true });
+            if (window._guided_builder_v2_test.updateSetupVisual) window._guided_builder_v2_test.updateSetupVisual(payload, { force: true });
+            return;
+          }
+        } catch (e) { console.log('preview helper call failed', e); }
+
+        // fallback: run our standalone preview flow
+        try {
+          const dbg = document.getElementById('guided-debug'); if (dbg) dbg.textContent = 'Preview button clicked — using fallback preview.' + "\n" + dbg.textContent;
+          fallback_preview(payload);
+        } catch (e) { console.log('preview fallback failed', e); }
+      });
+
+      const reloadCtx = document.getElementById('reload-context-visual');
+      if (reloadCtx) reloadCtx.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        const payload = safeBuild();
+        try {
+          if (window._guided_builder_v2_test && window._guided_builder_v2_test.updateContextVisual) {
+            window._guided_builder_v2_test.updateContextVisual(payload, { force: true });
+            return;
+          }
+        } catch (e) { console.log('reload context failed', e); }
+        try { fallback_preview(payload); } catch (e) { console.log('reload context fallback failed', e); }
+      });
+
+      const reloadSetup = document.getElementById('reload-setup-visual');
+      if (reloadSetup) reloadSetup.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        const payload = safeBuild();
+        try {
+          if (window._guided_builder_v2_test && window._guided_builder_v2_test.updateSetupVisual) {
+            window._guided_builder_v2_test.updateSetupVisual(payload, { force: true });
+            return;
+          }
+        } catch (e) { console.log('reload setup failed', e); }
+        try { fallback_preview(payload); } catch (e) { console.log('reload setup fallback failed', e); }
+      });
+    });
+  </script>
+  <script>
+    // Global diagnostics: capture uncaught errors and fetch requests into #guided-debug
+    (function () {
+      function logDbg(msg) {
+        try {
+          const d = document.getElementById('guided-debug');
+          const time = new Date().toISOString().replace('T',' ').replace('Z','');
+          if (d) d.textContent = time + ' ' + String(msg) + '\n' + d.textContent;
+          console.log('[guided-debug]', msg);
+        } catch (e) { console.log('dbg log failed', e); }
+      }
+
+      window.addEventListener('error', function (ev) {
+        try { logDbg('window.error: ' + (ev && ev.message ? ev.message : String(ev))); } catch (e) {}
+      });
+      window.addEventListener('unhandledrejection', function (ev) { logDbg('unhandledrejection: ' + String(ev && ev.reason)); });
+
+      // Wrap fetch to log requests/responses for preview endpoints
+      if (window.fetch) {
+        const _fetch = window.fetch.bind(window);
+        window.fetch = async function (url, opts) {
+          try { logDbg('fetch -> ' + String(url) + ' body=' + (opts && opts.body ? (String(opts.body).slice(0,1000)) : '<none>')); } catch (e) {}
+          const res = await _fetch(url, opts);
+          try { logDbg('fetch resp -> ' + String(url) + ' status=' + (res && res.status)); } catch (e) {}
+          return res;
+        };
+      }
+
+      // Poll for the test helper object and report when it appears
+      let checks = 0;
+      const inter = setInterval(() => {
+        checks += 1;
+        try {
+          if (window._guided_builder_v2_test) {
+            logDbg('helpers present: ' + Object.keys(window._guided_builder_v2_test).join(','));
+            clearInterval(inter);
+            return;
+          }
+        } catch (e) {}
+        if (checks > 10) {
+          logDbg('helpers not present after ' + checks + ' checks');
+          clearInterval(inter);
+          // Try reloading the main script as a last-resort recovery
+          try {
+            const s = document.createElement('script');
+            s.src = '/static/js/guided_builder_v2.js?reload=' + Date.now();
+            s.onload = function() { logDbg('reloaded guided_builder_v2.js'); };
+            s.onerror = function() { logDbg('reload failed for guided_builder_v2.js'); };
+            document.head.appendChild(s);
+            logDbg('attempted to reload guided_builder_v2.js');
+          } catch (e) { logDbg('script reload error: ' + (e && e.message)); }
+        }
+      }, 300);
+    })();
+  </script>
+{% endblock %}

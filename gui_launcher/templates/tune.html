@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Tune Strategy</h1>
+
+  <div class="card">
+    <div class="muted">From run bundle: {{ run_name }}</div>
+    <div><strong>Source spec:</strong> {{ source_spec_rel }}</div>
+    {% if preset %}
+      <div class="card" style="margin-top: 12px;">
+        <strong>Preset applied:</strong> {{ preset }}
+        <div class="muted">This only pre-fills the form. Nothing is saved until you click Save + Rebuild.</div>
+      </div>
+    {% endif %}
+  </div>
+
+  <form class="card" method="post" action="/tune/run" novalidate>
+    <input type="hidden" name="run_name" value="{{ run_name }}" />
+
+    {% set mc = master_calendar|default({'allowed_days':[0,1,2,3,4], 'sessions': {'Asia': {'enabled': True, 'start':'23:00', 'end':'08:00'}, 'London': {'enabled': True, 'start':'07:00', 'end':'16:00'}, 'NewYork': {'enabled': True, 'start':'13:00', 'end':'21:00'}}}, true) %}
+    {% set mtm = master_tm|default({'take_profit': {'enabled': True, 'target_r': 3.0, 'exit_pct': 100.0}, 'partial_exit': {'enabled': False, 'level_r': 1.5, 'exit_pct': 50.0}, 'trailing_stop': {'enabled': False, 'length': 21, 'activation_r': 0.5, 'stepped': True, 'min_move_pips': 7.0}}, true) %}
+
+    <h2>Save as new version</h2>
+    <div class="muted">Keep your original strategy untouched. This creates a new spec and rebuilds a new strategy folder.</div>
+    <label>New strategy name</label>
+    <input name="new_name" type="text" value="{{ suggested_name }}" required />
+
+    <hr />
+
+    <h2>Risk</h2>
+    <label>Risk per trade (%)</label>
+    <input name="risk_per_trade_pct" type="number" step="0.1" min="0.01" value="{{ risk_per_trade_pct }}" />
+
+    <hr />
+
+    <h2>Stops (applies to LONG + SHORT)</h2>
+    <div class="muted">These settings define the initial stop. For research-generated strategies, this is part of the spec and is used in signal generation.</div>
+
+    <label>Stop type</label>
+    <select name="stop_type" id="stop_type">
+      <option value="atr" {% if stop_type == 'atr' %}selected{% endif %}>ATR</option>
+      <option value="percent" {% if stop_type == 'percent' %}selected{% endif %}>Percent</option>
+    </select>
+
+    <div id="stop_atr" style="margin-top: 10px;">
+      <label>ATR length</label>
+      <input name="atr_length" type="number" min="1" value="{{ atr_length }}" />
+      <label>ATR multiplier</label>
+      <input name="atr_multiplier" type="number" step="0.1" min="0.1" value="{{ atr_multiplier }}" />
+    </div>
+
+    <div id="stop_percent" style="margin-top: 10px;">
+      <label>Stop percent (fraction)</label>
+      <input name="stop_percent" type="number" step="0.001" min="0.0001" value="{{ stop_percent }}" />
+      <div class="muted">Example: <code>0.02</code> means 2%.</div>
+    </div>
+
+    <hr />
+
+    <h2>Calendar filters</h2>
+    <div class="muted">For newbies: keep master defaults enabled. Advanced users can tighten sessions/days.</div>
+
+    <details class="card" style="margin-top: 12px;">
+      <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
+      <div style="margin-top: 10px;" class="muted">
+        Allowed days: {{ mc['allowed_days'] }}<br />
+        Asia: {{ mc['sessions']['Asia']['start'] }}–{{ mc['sessions']['Asia']['end'] }} (enabled={{ mc['sessions']['Asia']['enabled'] }})<br />
+        London: {{ mc['sessions']['London']['start'] }}–{{ mc['sessions']['London']['end'] }} (enabled={{ mc['sessions']['London']['enabled'] }})<br />
+        NewYork: {{ mc['sessions']['NewYork']['start'] }}–{{ mc['sessions']['NewYork']['end'] }} (enabled={{ mc['sessions']['NewYork']['enabled'] }})
+      </div>
+    </details>
+
+    <label>
+      <input type="radio" name="calendar_mode" value="master" {% if calendar_mode == 'master' %}checked{% endif %} />
+      Use master defaults (recommended)
+    </label>
+    <label>
+      <input type="radio" name="calendar_mode" value="disable" {% if calendar_mode == 'disable' %}checked{% endif %} />
+      Disable calendar filters
+    </label>
+    <label>
+      <input type="radio" name="calendar_mode" value="custom" {% if calendar_mode == 'custom' %}checked{% endif %} />
+      Custom
+    </label>
+
+    <div id="calendar_custom" style="margin-top: 10px; display: none;">
+      <div class="card" style="margin-top: 12px;">
+        <strong>Allowed days</strong>
+        <div class="muted">0=Mon … 6=Sun</div>
+        {% for d in [0,1,2,3,4,5,6] %}
+          <label>
+            <input type="checkbox" name="dow" value="{{ d }}" {% if d in calendar_allowed_days %}checked{% endif %} />
+            {% if d==0 %}Mon{% elif d==1 %}Tue{% elif d==2 %}Wed{% elif d==3 %}Thu{% elif d==4 %}Fri{% elif d==5 %}Sat{% else %}Sun{% endif %}
+          </label>
+        {% endfor %}
+      </div>
+
+      <div class="card" style="margin-top: 12px;">
+        <strong>Trading sessions</strong>
+        <div class="muted">Session windows come from master config; you can only toggle enabled/disabled here.</div>
+        <button type="button" id="copyMasterCalendarBtn" style="margin-top: 8px;">Copy master → custom</button>
+        <div style="margin-top: 10px;">
+          <label><input type="checkbox" name="session_Asia" value="1" {% if calendar_sessions.get('Asia') %}checked{% endif %} /> Asia ({{ mc['sessions']['Asia']['start'] }}–{{ mc['sessions']['Asia']['end'] }})</label>
+          <label><input type="checkbox" name="session_London" value="1" {% if calendar_sessions.get('London') %}checked{% endif %} /> London ({{ mc['sessions']['London']['start'] }}–{{ mc['sessions']['London']['end'] }})</label>
+          <label><input type="checkbox" name="session_NewYork" value="1" {% if calendar_sessions.get('NewYork') %}checked{% endif %} /> NewYork ({{ mc['sessions']['NewYork']['start'] }}–{{ mc['sessions']['NewYork']['end'] }})</label>
+        </div>
+      </div>
+    </div>
+
+    <hr />
+
+    <h2>Trade management overrides (optional)</h2>
+    <div class="muted">Leave as Master unless you’re intentionally changing behavior.</div>
+
+    <details class="card" style="margin-top: 12px;">
+      <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
+      <div style="margin-top: 10px;" class="muted">
+        Take profit: enabled={{ mtm['take_profit']['enabled'] }}, target_r={{ mtm['take_profit']['target_r'] }}, exit_pct={{ mtm['take_profit']['exit_pct'] }}<br />
+        Partial exit: enabled={{ mtm['partial_exit']['enabled'] }}, level_r={{ mtm['partial_exit']['level_r'] }}, exit_pct={{ mtm['partial_exit']['exit_pct'] }}<br />
+        Trailing stop: enabled={{ mtm['trailing_stop']['enabled'] }}, length={{ mtm['trailing_stop']['length'] }}, activation_r={{ mtm['trailing_stop']['activation_r'] }}, stepped={{ mtm['trailing_stop']['stepped'] }}, min_move_pips={{ mtm['trailing_stop']['min_move_pips'] }}
+      </div>
+    </details>
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Take profit</strong>
+      <label>
+        <input type="radio" name="tp_mode" value="master" {% if tp_mode == 'master' %}checked{% endif %} />
+        Use master defaults (recommended)
+      </label>
+      <label>
+        <input type="radio" name="tp_mode" value="disable" {% if tp_mode == 'disable' %}checked{% endif %} />
+        Disable take profit
+      </label>
+      <label>
+        <input type="radio" name="tp_mode" value="custom" {% if tp_mode == 'custom' %}checked{% endif %} />
+        Custom (single level)
+      </label>
+
+      <div id="tp_custom" style="margin-top: 10px; display: none;">
+        <button type="button" id="copyMasterTpBtn" style="margin-bottom: 8px;">Copy master → custom</button>
+        <label>Target R</label>
+        <input name="tp_target_r" type="number" step="0.1" min="0.1" value="{{ tp_target_r }}" />
+        <label>Exit %</label>
+        <input name="tp_exit_pct" type="number" step="1" min="1" max="100" value="{{ tp_exit_pct }}" />
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Partial exit</strong>
+      <label>
+        <input type="checkbox" name="partial_enabled" value="1" {% if partial_enabled %}checked{% endif %} />
+        Enable partial exit (single level)
+      </label>
+      <div id="partial_fields" style="margin-top: 10px; display: none;">
+        <button type="button" id="copyMasterPartialBtn" style="margin-bottom: 8px;">Copy master values</button>
+        <label>Level R</label>
+        <input name="partial_level_r" type="number" step="0.1" min="0.1" value="{{ partial_level_r }}" />
+        <label>Exit %</label>
+        <input name="partial_exit_pct" type="number" step="1" min="1" max="100" value="{{ partial_exit_pct }}" />
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 12px;">
+      <strong>Trailing stop</strong>
+      <label>
+        <input type="checkbox" name="trailing_enabled" value="1" {% if trailing_enabled %}checked{% endif %} />
+        Enable trailing stop (EMA)
+      </label>
+      <div id="trailing_fields" style="margin-top: 10px; display: none;">
+        <button type="button" id="copyMasterTrailingBtn" style="margin-bottom: 8px;">Copy master values</button>
+        <label>EMA length</label>
+        <input name="trailing_length" type="number" min="1" value="{{ trailing_length }}" />
+        <label>Activation R</label>
+        <input name="trailing_activation_r" type="number" step="0.1" min="0" value="{{ trailing_activation_r }}" />
+        <label>
+          <input type="checkbox" name="trailing_stepped" value="1" {% if trailing_stepped %}checked{% endif %} />
+          Stepped trailing
+        </label>
+        <label>Min move (pips)</label>
+        <input name="trailing_min_move_pips" type="number" step="0.1" min="0" value="{{ trailing_min_move_pips }}" />
+      </div>
+    </div>
+
+    {% if error %}
+      <div class="card card-error" style="margin-top: 12px;">{{ error }}</div>
+    {% endif %}
+
+    <button class="primary" type="submit">Save + Rebuild</button>
+  </form>
+
+  <div
+    id="masterDefaults"
+    style="display:none;"
+    data-allowed-days="{{ mc['allowed_days']|join(',') }}"
+    data-session-asia-enabled="{{ 1 if mc['sessions']['Asia']['enabled'] else 0 }}"
+    data-session-london-enabled="{{ 1 if mc['sessions']['London']['enabled'] else 0 }}"
+    data-session-newyork-enabled="{{ 1 if mc['sessions']['NewYork']['enabled'] else 0 }}"
+    data-tp-enabled="{{ 1 if mtm['take_profit']['enabled'] else 0 }}"
+    data-tp-target-r="{{ mtm['take_profit']['target_r'] }}"
+    data-tp-exit-pct="{{ mtm['take_profit']['exit_pct'] }}"
+    data-partial-enabled="{{ 1 if mtm['partial_exit']['enabled'] else 0 }}"
+    data-partial-level-r="{{ mtm['partial_exit']['level_r'] }}"
+    data-partial-exit-pct="{{ mtm['partial_exit']['exit_pct'] }}"
+    data-trailing-enabled="{{ 1 if mtm['trailing_stop']['enabled'] else 0 }}"
+    data-trailing-length="{{ mtm['trailing_stop']['length'] }}"
+    data-trailing-activation-r="{{ mtm['trailing_stop']['activation_r'] }}"
+    data-trailing-stepped="{{ 1 if mtm['trailing_stop']['stepped'] else 0 }}"
+    data-trailing-min-move-pips="{{ mtm['trailing_stop']['min_move_pips'] }}"
+  ></div>
+
+  <script src="/static/js/tune.js"></script>
+{% endblock %}

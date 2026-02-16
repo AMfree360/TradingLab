@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Create Strategy (Guided)</h1>
+  <p class="muted">A structured wizard that generates a valid research spec (no fragile English required).</p>
+
+  <div class="card" style="border-left: 4px solid #666;">
+    <div class="muted"><strong>Guided strategy creation uses Builder v2.</strong></div>
+    <div class="muted" style="margin-top: 6px;">For advanced edits, use the YAML editor after creation.</div>
+  </div>
+
+  <form class="card" method="post" action="/create-strategy-guided/step1">
+    <input type="hidden" name="template" value="builder_v2" />
+    <label>Strategy name</label>
+    <input name="name" type="text" value="{{ name or '' }}" placeholder="e.g. rsi_breakout" required />
+    <div class="muted">Allowed: letters, numbers, <code>_</code>, <code>-</code> (no spaces).</div>
+
+    <button class="primary" type="submit">Next</button>
+  </form>
+{% endblock %}

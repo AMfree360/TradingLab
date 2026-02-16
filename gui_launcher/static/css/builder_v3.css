@@ -1,0 +1,39 @@
+/* Minimal CSS for Builder V3 skeleton */
+.v3-grid { display: grid; grid-template-columns: 1fr 360px; gap: 16px; }
+.v3-col { padding: 12px; background: #fff; border: 1px solid #e6e6e6; border-radius: 6px; }
+.preview { position: sticky; top: 12px; height: calc(100vh - 24px); overflow: auto; }
+.card-error { background: #fff5f5; border-color: #f5c6cb; padding: 8px; }
+.muted { color: #666; }
+
+/* Chart sizing and preview area */
+.v3-preview-fig { min-height: 180px; max-height: 420px; overflow: hidden; }
+.v3-preview-fig > div { width: 100% !important; height: 100% !important; }
+.v3-preview-json { white-space: pre-wrap; font-size: 12px; max-height: 200px; overflow: auto; background: #fafafa; padding:8px; border-radius:4px; }
+
+/* validation highlight */
+.field-error { outline: 2px solid rgba(220,20,60,0.9); background: #fff6f6; }
+
+/* validation summary */
+.v3-error-summary { background: #fffaf6; border: 1px solid #ffd6c6; padding: 8px; border-radius: 6px; font-size: 13px; }
+.v3-error-summary .v3-error-item { margin: 6px 0; }
+.v3-error-summary .link-like { background: none; border: none; color: #b22222; text-decoration: underline; cursor: pointer; padding: 0; font: inherit; }
+
+/* Modal styles for Builder V3 */
+.v3-modal-root { display: none; align-items: center; justify-content: center; position: fixed; inset: 0; z-index: 9999; }
+.v3-modal-visible { display: flex; }
+.v3-modal-backdrop { position: fixed; inset: 0; background: rgba(11, 22, 33, 0.45); backdrop-filter: blur(2px); }
+.v3-modal-card { position: relative; background: #ffffff; padding: 18px; border-radius: 8px; width: 460px; max-width: calc(100% - 32px); box-shadow: 0 10px 30px rgba(0,0,0,0.18); z-index: 10000; }
+.v3-modal-title { margin: 0 0 8px 0; font-size: 16px; }
+.v3-modal-msg { color: #333; font-size: 13px; margin-bottom: 8px; }
+.v3-modal-suggest { margin-bottom: 8px; font-size: 13px; color: #444; }
+.v3-modal-rename { display: none; margin-bottom: 10px; }
+.v3-modal-input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+.v3-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.v3-modal-btn { background: #f4f4f6; border: 1px solid #e6e6e9; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+.v3-modal-btn:focus { outline: 2px solid #6aa1ff; }
+.v3-modal-primary { background: linear-gradient(180deg,#2b8aff,#0b5be6); color: #fff; border: none; }
+.v3-modal-open { overflow: hidden; }
+
+@media (max-width: 520px) {
+	.v3-modal-card { width: 92%; padding: 12px; }
+}

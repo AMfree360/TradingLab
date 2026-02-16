@@ -1,512 +1,3 @@
-/* Guided Builder v2 — State-integrated rule renderer (Phase 4)
-   - Renders rule rows with per-type parameter blocks
-   - Two-way sync: DOM <-> `GuidedBuilderV2State` and hidden JSON inputs
-   - Keeps volume features behind FEATURE_FLAG.volume (not rendered)
-*/
-(function () {
-  const FEATURE_FLAG = { volume: false };
-
-  const contextTypes = [
-    ['price_vs_ma', 'Trend: Price vs MA'],
-    ['ma_cross_state', 'Trend: MA state (fast vs slow)'],
-    ['atr_pct', 'Volatility: ATR% filter'],
-    ['structure_breakout_state', 'Structure: Breakout state'],
-    ['ma_spread_pct', 'Trend strength: MA spread %'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  const signalTypes = [
-    ['ma_cross', 'MA cross (fast vs slow)'],
-    ['rsi_threshold', 'RSI threshold'],
-    ['rsi_cross_back', 'RSI cross back'],
-    ['donchian_breakout', 'Donchian breakout/breakdown'],
-    ['new_high_low_breakout', 'New high/low breakout'],
-    ['pullback_to_ma', 'Pullback to MA'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  const triggerTypes = [
-    ['pin_bar', 'Pin bar'],
-    ['inside_bar_breakout', 'Inside bar breakout'],
-    ['engulfing', 'Engulfing'],
-    ['ma_reclaim', 'MA reclaim'],
-    ['prior_bar_break', 'Break prior bar high/low'],
-    ['donchian_breakout', 'Donchian breakout/breakdown'],
-    ['range_breakout', 'Range breakout'],
-    ['wide_range_candle', 'Wide-range candle (vs ATR)'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  function el(tag, attrs) {
-    const node = document.createElement(tag);
-    if (!attrs) return node;
-    for (const k of Object.keys(attrs)) {
-      if (k === 'text') node.textContent = attrs[k];
-      else if (k === 'html') node.innerHTML = attrs[k];
-      else if (k === 'class') node.className = attrs[k];
-      else node.setAttribute(k, String(attrs[k]));
-    }
-    return node;
-  }
-
-  function ensureHidden(form, id) {
-    let elHidden = form.querySelector('#' + id);
-    if (!elHidden) {
-      elHidden = el('input', { type: 'hidden', id: id, name: id });
-      elHidden.value = '[]';
-      form.appendChild(elHidden);
-    }
-    return elHidden;
-  }
-
-  function parseJsonSafe(txt) {
-    try { const p = JSON.parse(String(txt || '[]')); return Array.isArray(p) ? p : []; } catch (e) { return []; }
-  }
-
-  function renderParamsForType(container, section, type, rule) {
-    container.innerHTML = '';
-    if (!type) return;
-    // Simple, explicit parameter sets for a few types
-    if (type === 'price_vs_ma') {
-      // ma_type, length, op, threshold
-      const maType = el('select', { class: 'param', 'data-key': 'ma_type' });
-      maType.appendChild(el('option', { value: 'sma', text: 'SMA' }));
-      maType.appendChild(el('option', { value: 'ema', text: 'EMA' }));
-      maType.value = (rule && rule.ma_type) ? rule.ma_type : 'sma';
-
-      const len = el('input', { type: 'number', class: 'param', 'data-key': 'length', min: 1, value: (rule && rule.length) ? String(rule.length) : '20' });
-      const op = el('select', { class: 'param', 'data-key': 'op' });
-      op.appendChild(el('option', { value: '>=' , text: '≥' }));
-      op.appendChild(el('option', { value: '<=' , text: '≤' }));
-      op.appendChild(el('option', { value: '>' , text: '>' }));
-      op.appendChild(el('option', { value: '<' , text: '<' }));
-      op.value = (rule && rule.op) ? rule.op : '>=';
-      const thr = el('input', { type: 'number', class: 'param', 'data-key': 'threshold', step: 0.01, min: 0, value: (rule && rule.threshold) ? String(rule.threshold) : '1.0' });
-
-      const l1 = el('label'); l1.appendChild(document.createTextNode('MA type: ')); l1.appendChild(maType); container.appendChild(l1);
-      const l2 = el('label'); l2.appendChild(document.createTextNode(' MA length: ')); l2.appendChild(len); container.appendChild(l2);
-      const l3 = el('label'); l3.appendChild(document.createTextNode(' Op: ')); l3.appendChild(op); container.appendChild(l3);
-      const l4 = el('label'); l4.appendChild(document.createTextNode(' Threshold: ')); l4.appendChild(thr); container.appendChild(l4);
-      return;
-    }
-
-    if (type === 'ma_cross' || type === 'ma_cross_state') {
-      const fast = el('input', { type: 'number', class: 'param', 'data-key': 'fast', min: 1, value: (rule && rule.fast) ? String(rule.fast) : '8' });
-      const slow = el('input', { type: 'number', class: 'param', 'data-key': 'slow', min: 1, value: (rule && rule.slow) ? String(rule.slow) : '21' });
-      const lf = el('label'); lf.appendChild(document.createTextNode('Fast: ')); lf.appendChild(fast); container.appendChild(lf);
-      const ls = el('label'); ls.appendChild(document.createTextNode(' Slow: ')); ls.appendChild(slow); container.appendChild(ls);
-      return;
-    }
-
-    if (type === 'rsi_threshold') {
-      const len = el('input', { type: 'number', class: 'param', 'data-key': 'length', min: 1, value: (rule && rule.length) ? String(rule.length) : '14' });
-      const thr = el('input', { type: 'number', class: 'param', 'data-key': 'threshold', min: 0, max: 100, value: (rule && rule.threshold) ? String(rule.threshold) : '70' });
-      const llen = el('label'); llen.appendChild(document.createTextNode('Length: ')); llen.appendChild(len); container.appendChild(llen);
-      const lthr = el('label'); lthr.appendChild(document.createTextNode(' Threshold: ')); lthr.appendChild(thr); container.appendChild(lthr);
-      return;
-    }
-
-    if (type === 'atr_pct') {
-      const len = el('input', { type: 'number', class: 'param', 'data-key': 'length', min: 1, value: (rule && rule.length) ? String(rule.length) : '14' });
-      const pct = el('input', { type: 'number', class: 'param', 'data-key': 'pct', step: 0.01, min: 0, value: (rule && rule.pct) ? String(rule.pct) : '1.0' });
-      const llen2 = el('label'); llen2.appendChild(document.createTextNode('Length: ')); llen2.appendChild(len); container.appendChild(llen2);
-      const lpct = el('label'); lpct.appendChild(document.createTextNode(' %: ')); lpct.appendChild(pct); container.appendChild(lpct);
-      return;
-    }
-
-    // default: custom DSL
-    const ta = el('textarea', { class: 'param', 'data-key': 'custom', rows: 2 });
-    if (rule && rule.custom) ta.value = rule.custom;
-    container.appendChild(ta);
-  }
-
-  function readParamsFromRow(row) {
-    const params = {};
-    const paramEls = Array.from(row.querySelectorAll('.param'));
-    for (const p of paramEls) {
-      const key = p.getAttribute('data-key');
-      if (!key) continue;
-      if (p.tagName === 'SELECT' || p.tagName === 'INPUT' || p.tagName === 'TEXTAREA') {
-        const val = p.value;
-        if (p.type === 'number') {
-          const n = Number(val);
-          params[key] = Number.isFinite(n) ? n : val;
-        } else {
-          params[key] = val;
-        }
-      }
-    }
-    return params;
-  }
-
-  function createRuleRow(section, rule) {
-    const row = el('div', { class: 'card rule-row' });
-    row.dataset.section = section;
-
-    const left = el('div', { class: 'rule-left' });
-    const right = el('div', { class: 'rule-right' });
-
-    const sel = el('select', { class: 'rule-type' });
-    const types = section === 'context' ? contextTypes : (section === 'signal' ? signalTypes : triggerTypes);
-    for (const [v, label] of types) { const o = el('option', { value: v }); o.textContent = label; sel.appendChild(o); }
-    if (rule && rule.type) sel.value = rule.type;
-
-    left.appendChild(el('div', { class: 'rule-row-top' }));
-    left.querySelector('.rule-row-top').appendChild(sel);
-
-    if (section === 'signal' || section === 'trigger') {
-      const tf = el('select', { class: 'rule-tf' }); tf.appendChild(el('option', { value: 'default', text: 'default' })); tf.appendChild(el('option', { value: '1m', text: '1m' })); tf.appendChild(el('option', { value: '5m', text: '5m' })); tf.appendChild(el('option', { value: '15m', text: '15m' })); if (rule && rule.tf) tf.value = rule.tf; left.querySelector('.rule-row-top').appendChild(tf);
-    }
-
-    const valid = el('input', { type: 'number', class: 'rule-valid', min: 1, placeholder: 'valid_for_bars' });
-    if (rule && rule.valid_for_bars) valid.value = String(rule.valid_for_bars);
-    left.appendChild(valid);
-
-    // params container
-    const params = el('div', { class: 'rule-params' });
-    renderParamsForType(params, section, (rule && rule.type) ? rule.type : sel.value, rule || {});
-
-    // wire type change to re-render params
-    sel.addEventListener('change', () => {
-      renderParamsForType(params, section, sel.value, {});
-      // commit entire section to state after change
-      commitSectionFromDOM(section);
-    });
-
-    // update on param changes
-    params.addEventListener('input', () => commitSectionFromDOM(section));
-    params.addEventListener('change', () => commitSectionFromDOM(section));
-
-    // remove button
-    const remove = el('button', { type: 'button', class: 'rule-remove' }); remove.textContent = 'Remove';
-    remove.addEventListener('click', () => { row.remove(); commitSectionFromDOM(section); });
-
-    right.appendChild(params);
-    right.appendChild(remove);
-
-    row.appendChild(left); row.appendChild(right);
-
-    return row;
-  }
-
-  function renderRulesInto(container, rules, section) {
-    if (!container) return;
-    container.innerHTML = '';
-    for (const r of (rules || [])) {
-      const row = createRuleRow(section, r);
-      container.appendChild(row);
-    }
-  }
-
-  function serializeRulesFromDOM(container) {
-    const out = [];
-    if (!container) return out;
-    const rows = Array.from(container.querySelectorAll('.rule-row'));
-    for (const r of rows) {
-      const type = (r.querySelector('.rule-type') || {}).value || '';
-      if (!type) continue;
-      const rule = { type };
-      const tfEl = r.querySelector('.rule-tf'); if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = tfEl.value;
-      const validEl = r.querySelector('.rule-valid'); if (validEl && validEl.value !== '') { const n = Number(validEl.value); if (Number.isFinite(n)) rule.valid_for_bars = n; }
-      const params = readParamsFromRow(r);
-      for (const k of Object.keys(params)) {
-        rule[k] = params[k];
-      }
-      out.push(rule);
-    }
-    return out;
-  }
-
-  function commitSectionFromDOM(section) {
-    try {
-      const container = document.getElementById(section + '-rules');
-      if (!container || !window.GuidedBuilderV2State) return;
-      const rules = serializeRulesFromDOM(container);
-      window.GuidedBuilderV2State.set(section + '_rules', rules);
-    } catch (e) { console.error('commitSectionFromDOM', e); }
-  }
-
-  function syncHiddenFromState(form, state) {
-    try {
-      const ctx = ensureHidden(form, 'context_rules_json');
-      const sig = ensureHidden(form, 'signal_rules_json');
-      const trg = ensureHidden(form, 'trigger_rules_json');
-      ctx.value = JSON.stringify(state.context_rules || []);
-      sig.value = JSON.stringify(state.signal_rules || []);
-      trg.value = JSON.stringify(state.trigger_rules || []);
-    } catch (e) { console.error('syncHiddenFromState', e); }
-  }
-
-  function init() {
-    const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
-    if (!form) return;
-
-    const ctxContainer = document.getElementById('context-rules');
-    const sigContainer = document.getElementById('signal-rules');
-    const trgContainer = document.getElementById('trigger-rules');
-
-    ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json');
-
-    // initial load: prefer state if present, else hidden inputs
-    const initialState = (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.get === 'function') ? window.GuidedBuilderV2State.get() : null;
-    const initial = initialState || {};
-
-    // if state has no rules, read hidden inputs
-    if (!initial || !initial.context_rules || !initial.signal_rules || !initial.trigger_rules) {
-      initial.context_rules = parseJsonSafe(form.querySelector('#context_rules_json')?.value);
-      initial.signal_rules = parseJsonSafe(form.querySelector('#signal_rules_json')?.value);
-      initial.trigger_rules = parseJsonSafe(form.querySelector('#trigger_rules_json')?.value);
-    }
-
-    if (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.load === 'function') {
-      window.GuidedBuilderV2State.load(initial);
-    }
-
-    // subscribe to state updates and render + sync hidden
-    if (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.subscribe === 'function') {
-      window.GuidedBuilderV2State.subscribe((s) => {
-        try {
-          renderRulesInto(ctxContainer, s.context_rules || [], 'context');
-          renderRulesInto(sigContainer, s.signal_rules || [], 'signal');
-          renderRulesInto(trgContainer, s.trigger_rules || [], 'trigger');
-          syncHiddenFromState(form, s);
-        } catch (e) { console.error('state subscribe render error', e); }
-      });
-    }
-
-    // wire add buttons (guarded to avoid duplicate wiring)
-    const addCtx = document.getElementById('add-context');
-    const addSig = document.getElementById('add-signal');
-    const addTrg = document.getElementById('add-trigger');
-    if (addCtx && ctxContainer && !addCtx.dataset.wired) { addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); commitSectionFromDOM('context'); }); addCtx.dataset.wired = '1'; }
-    if (addSig && sigContainer && !addSig.dataset.wired) { addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); commitSectionFromDOM('signal'); }); addSig.dataset.wired = '1'; }
-    if (addTrg && trgContainer && !addTrg.dataset.wired) { addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); commitSectionFromDOM('trigger'); }); addTrg.dataset.wired = '1'; }
-
-    // edits/removes: delegate to container and commit on change
-    const delegateEvents = (container, section) => {
-      if (!container) return;
-      container.addEventListener('input', () => commitSectionFromDOM(section));
-      container.addEventListener('change', () => commitSectionFromDOM(section));
-      container.addEventListener('click', (ev) => { if (ev.target && ev.target.classList && ev.target.classList.contains('rule-remove')) commitSectionFromDOM(section); });
-    };
-    delegateEvents(ctxContainer, 'context'); delegateEvents(sigContainer, 'signal'); delegateEvents(trgContainer, 'trigger');
-
-    // ensure hidden sync on submit
-    form.addEventListener('submit', () => { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); const s = window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}; syncHiddenFromState(form, s); } else { syncHidden(form, ctxContainer, sigContainer, trgContainer); } });
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-
-})();
-/* Guided Builder v2 — Clean rewrite (Phase 4 starter)
-   Self-contained module: reads the Step 4 form, renders simple rule rows,
-   two-way syncs hidden JSON inputs: context_rules_json, signal_rules_json,
-   trigger_rules_json. Keeps implementation minimal and robust for iterative
-   expansion (per-type parameter blocks come next).
-*/
-(function () {
-  const contextTypes = [
-    ['price_vs_ma', 'Trend: Price vs MA'],
-    ['ma_cross_state', 'Trend: MA state (fast vs slow)'],
-    ['atr_pct', 'Volatility: ATR% filter'],
-    ['structure_breakout_state', 'Structure: Breakout state'],
-    ['ma_spread_pct', 'Trend strength: MA spread %'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  const signalTypes = [
-    ['ma_cross', 'MA cross (fast vs slow)'],
-    ['rsi_threshold', 'RSI threshold'],
-    ['rsi_cross_back', 'RSI cross back'],
-    ['donchian_breakout', 'Donchian breakout/breakdown'],
-    ['new_high_low_breakout', 'New high/low breakout'],
-    ['pullback_to_ma', 'Pullback to MA'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  const triggerTypes = [
-    ['pin_bar', 'Pin bar'],
-    ['inside_bar_breakout', 'Inside bar breakout'],
-    ['engulfing', 'Engulfing'],
-    ['ma_reclaim', 'MA reclaim'],
-    ['prior_bar_break', 'Break prior bar high/low'],
-    ['donchian_breakout', 'Donchian breakout/breakdown'],
-    ['range_breakout', 'Range breakout'],
-    ['wide_range_candle', 'Wide-range candle (vs ATR)'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  function el(tag, attrs) {
-    const node = document.createElement(tag);
-    if (!attrs) return node;
-    for (const k of Object.keys(attrs)) {
-      if (k === 'text') node.textContent = attrs[k];
-      else if (k === 'html') node.innerHTML = attrs[k];
-      else if (k === 'class') node.className = attrs[k];
-      else node.setAttribute(k, String(attrs[k]));
-    }
-    return node;
-  }
-
-  function ensureHidden(form, id) {
-    let elHidden = form.querySelector('#' + id);
-    if (!elHidden) {
-      elHidden = el('input', { type: 'hidden', id: id, name: id });
-      elHidden.value = '[]';
-      form.appendChild(elHidden);
-    }
-    return elHidden;
-  }
-
-  function parseJsonSafe(txt) {
-    try { const p = JSON.parse(String(txt || '[]')); return Array.isArray(p) ? p : []; } catch (e) { return []; }
-  }
-
-  function serializeRules(container) {
-    const out = [];
-    if (!container) return out;
-    const rows = Array.from(container.querySelectorAll('.rule-row'));
-    for (const r of rows) {
-      const type = (r.querySelector('.rule-type') || {}).value || '';
-      if (!type) continue;
-      const rule = { type: String(type) };
-      const tfEl = r.querySelector('.rule-tf');
-      if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = String(tfEl.value);
-      const validEl = r.querySelector('.rule-valid');
-      if (validEl && validEl.value !== '') {
-        const n = Number(validEl.value);
-        if (Number.isFinite(n)) rule.valid_for_bars = n;
-      }
-      const customEl = r.querySelector('.rule-custom');
-      if (customEl && customEl.value && customEl.value.trim() !== '') rule.custom = customEl.value.trim();
-      out.push(rule);
-    }
-    return out;
-  }
-
-  function syncHidden(form, ctxContainer, sigContainer, trgContainer) {
-    try {
-      const ctxHidden = ensureHidden(form, 'context_rules_json');
-      const sigHidden = ensureHidden(form, 'signal_rules_json');
-      const trgHidden = ensureHidden(form, 'trigger_rules_json');
-      ctxHidden.value = JSON.stringify(serializeRules(ctxContainer));
-      sigHidden.value = JSON.stringify(serializeRules(sigContainer));
-      trgHidden.value = JSON.stringify(serializeRules(trgContainer));
-    } catch (e) { console.error('syncHidden error', e); }
-  }
-
-  function createRuleRow(section, rule) {
-    const row = el('div', { class: 'rule-row' });
-    const left = el('div', { class: 'rule-left' });
-    const right = el('div', { class: 'rule-right' });
-
-    // type select
-    const sel = el('select', { class: 'rule-type', name: `type` });
-    const types = section === 'context' ? contextTypes : (section === 'signal' ? signalTypes : triggerTypes);
-    for (const [v, label] of types) {
-      const o = el('option', { value: v }); o.textContent = label; sel.appendChild(o);
-    }
-    if (rule && rule.type) sel.value = rule.type;
-
-    left.appendChild(sel);
-
-    // TF select for signal/trigger
-    if (section === 'signal' || section === 'trigger') {
-      const tf = el('select', { class: 'rule-tf', name: 'tf' });
-      tf.appendChild(el('option', { value: 'default', text: 'default' }));
-      tf.appendChild(el('option', { value: '1m', text: '1m' }));
-      tf.appendChild(el('option', { value: '5m', text: '5m' }));
-      tf.appendChild(el('option', { value: '15m', text: '15m' }));
-      if (rule && rule.tf) tf.value = rule.tf;
-      left.appendChild(tf);
-    }
-
-    // valid_for_bars
-    const valid = el('input', { type: 'number', class: 'rule-valid', name: 'valid_for_bars', min: 1, value: (rule && rule.valid_for_bars) ? String(rule.valid_for_bars) : '' });
-    left.appendChild(valid);
-
-    // parameter area (simple custom DSL textarea for now)
-    const ta = el('textarea', { class: 'rule-custom', name: 'custom', rows: 2 });
-    if (rule && rule.custom) ta.value = rule.custom;
-    right.appendChild(ta);
-
-    // remove button
-    const remove = el('button', { type: 'button', class: 'rule-remove' }); remove.textContent = 'Remove';
-    right.appendChild(remove);
-
-    row.appendChild(left); row.appendChild(right);
-
-    return row;
-  }
-
-  function renderRules(container, rules, section) {
-    if (!container) return;
-    container.innerHTML = '';
-    if (!Array.isArray(rules) || rules.length === 0) return;
-    for (const r of rules) {
-      const row = createRuleRow(section, r);
-      container.appendChild(row);
-    }
-  }
-
-  function wire(container, form, ctxContainer, sigContainer, trgContainer) {
-    // delegate events
-    container.addEventListener('input', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
-    container.addEventListener('change', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
-    container.addEventListener('click', (ev) => {
-      if (!ev.target) return;
-      if (ev.target.classList && ev.target.classList.contains('rule-remove')) {
-        const row = ev.target.closest('.rule-row'); if (row) { row.remove(); syncHidden(form, ctxContainer, sigContainer, trgContainer); }
-      }
-    });
-  }
-
-  function init() {
-    const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
-    if (!form) return;
-
-    const ctxContainer = document.getElementById('context-rules');
-    const sigContainer = document.getElementById('signal-rules');
-    const trgContainer = document.getElementById('trigger-rules');
-
-    const ctxHidden = ensureHidden(form, 'context_rules_json');
-    const sigHidden = ensureHidden(form, 'signal_rules_json');
-    const trgHidden = ensureHidden(form, 'trigger_rules_json');
-
-    // load initial rules from hidden inputs
-    const ctx = parseJsonSafe(ctxHidden.value);
-    const sig = parseJsonSafe(sigHidden.value);
-    const trg = parseJsonSafe(trgHidden.value);
-
-    renderRules(ctxContainer, ctx, 'context');
-    renderRules(sigContainer, sig, 'signal');
-    renderRules(trgContainer, trg, 'trigger');
-
-    // wire add buttons (guarded to avoid duplicate wiring)
-    const addCtx = document.getElementById('add-context');
-    const addSig = document.getElementById('add-signal');
-    const addTrg = document.getElementById('add-trigger');
-
-    if (addCtx && ctxContainer && !addCtx.dataset.wired) { addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); }); addCtx.dataset.wired = '1'; }
-    if (addSig && sigContainer && !addSig.dataset.wired) { addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); }); addSig.dataset.wired = '1'; }
-    if (addTrg && trgContainer && !addTrg.dataset.wired) { addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); }); addTrg.dataset.wired = '1'; }
-
-    // delegate wiring for edits/removes
-    wire(ctxContainer || document, form, ctxContainer, sigContainer, trgContainer);
-    wire(sigContainer || document, form, ctxContainer, sigContainer, trgContainer);
-    wire(trgContainer || document, form, ctxContainer, sigContainer, trgContainer);
-
-    // ensure we sync initially
-    syncHidden(form, ctxContainer, sigContainer, trgContainer);
-
-    // on submit, make sure hidden inputs reflect current state
-    form.addEventListener('submit', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-
-})();
- 
     (function () {
       const form = document.querySelector('form[action="/create-strategy-guided/step4"]');
       // Feature flags (toggle experimental features safely)
@@ -691,39 +182,33 @@
         }
 
         function inputNumber(parent, label, field, value, opts) {
-          const wrap = el('label');
-          wrap.appendChild(document.createTextNode(label));
+          parent.appendChild(el('label', { text: label }));
           const inp = el('input');
           inp.type = 'number';
           inp.setAttribute('data-field', field);
           if (opts && typeof opts.min !== 'undefined') inp.min = String(opts.min);
           if (opts && typeof opts.step !== 'undefined') inp.step = String(opts.step);
           inp.value = value != null ? String(value) : '';
-          wrap.appendChild(inp);
-          parent.appendChild(wrap);
+          parent.appendChild(inp);
         }
 
         function inputText(parent, label, field, value, placeholder) {
-          const wrap = el('label');
-          wrap.appendChild(document.createTextNode(label));
+          parent.appendChild(el('label', { text: label }));
           const inp = el('input');
           inp.type = 'text';
           inp.setAttribute('data-field', field);
           if (placeholder) inp.placeholder = placeholder;
           inp.value = value != null ? String(value) : '';
-          wrap.appendChild(inp);
-          parent.appendChild(wrap);
+          parent.appendChild(inp);
         }
 
         function inputTextArea(parent, label, field, value, placeholder) {
-          const wrap = el('label');
-          wrap.appendChild(document.createTextNode(label));
+          parent.appendChild(el('label', { text: label }));
           const ta = el('textarea', { rows: '2' });
           ta.setAttribute('data-field', field);
           if (placeholder) ta.placeholder = placeholder;
           ta.value = value != null ? String(value) : '';
-          wrap.appendChild(ta);
-          parent.appendChild(wrap);
+          parent.appendChild(ta);
         }
 
         function inputCheckbox(parent, label, field, checked) {
@@ -738,8 +223,7 @@
         }
 
         function select(parent, label, field, options, value) {
-          const wrap = el('label');
-          wrap.appendChild(document.createTextNode(label));
+          parent.appendChild(el('label', { text: label }));
           const sel = el('select');
           sel.setAttribute('data-field', field);
           for (const opt of options) {
@@ -749,8 +233,7 @@
             sel.appendChild(o);
           }
           if (value != null) sel.value = value;
-          wrap.appendChild(sel);
-          parent.appendChild(wrap);
+          parent.appendChild(sel);
         }
           block('ma_cross_state', (b) => {
             select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], rule?.ma_type || 'ema');
@@ -1061,31 +544,28 @@
       }
 
       const addContextBtn = document.getElementById('add-context');
-      if (addContextBtn && !addContextBtn.dataset.wired) {
+      if (addContextBtn) {
         addContextBtn.addEventListener('click', () => {
           if (ctxContainer) ctxContainer.appendChild(ruleRow('context', { type: 'price_vs_ma' }));
           syncHidden();
           schedule();
         });
-        addContextBtn.dataset.wired = '1';
       }
       const addSignalBtn = document.getElementById('add-signal');
-      if (addSignalBtn && !addSignalBtn.dataset.wired) {
+      if (addSignalBtn) {
         addSignalBtn.addEventListener('click', () => {
           if (sigContainer) sigContainer.appendChild(ruleRow('signal', { type: 'rsi_threshold' }));
           syncHidden();
           schedule();
         });
-        addSignalBtn.dataset.wired = '1';
       }
       const addTriggerBtn = document.getElementById('add-trigger');
-      if (addTriggerBtn && !addTriggerBtn.dataset.wired) {
+      if (addTriggerBtn) {
         addTriggerBtn.addEventListener('click', () => {
           if (trgContainer) trgContainer.appendChild(ruleRow('trigger', { type: 'prior_bar_break' }));
           syncHidden();
           schedule();
         });
-        addTriggerBtn.dataset.wired = '1';
       }
 
       function updateTriggerParamVisibility() {

@@ -614,6 +614,17 @@
       const body = document.getElementById('effective-preview-body');
       if (!form || !body) return;
 
+      // If the server-side template didn't populate `#draft_id`, try the
+      // URL query parameter and populate the hidden input so POSTs include it.
+      try {
+        const draftEl = form.querySelector('#draft_id') || form.querySelector('input[name="draft_id"]');
+        if (draftEl && (!draftEl.value || String(draftEl.value).trim() === '')) {
+          const sp = new URLSearchParams(window.location.search || '');
+          const q = sp.get('draft_id') || '';
+          if (q) draftEl.value = q;
+        }
+      } catch (e) { console.error('populate draft_id from URL failed', e); }
+
       const contextVisualEl = document.getElementById('context-visual');
       const contextVisualMsgEl = document.getElementById('context-visual-message');
 
@@ -1388,9 +1399,24 @@
           schedule();
         });
       }
-      form.addEventListener('submit', () => {
-        syncHidden();
-      });
+      form.addEventListener('submit', (ev) => {
+        try {
+          syncHidden();
+          // Ensure `draft_id` hidden input exists and preserves its value so
+          // server receives it on form POST (some flows expect JSON but the
+          // normal form submit should include this field).
+          let d = form.querySelector('#draft_id');
+          if (!d) {
+            const fallback = document.querySelector('input[name="draft_id"]')?.value || '';
+            d = el('input', { type: 'hidden', id: 'draft_id', name: 'draft_id' });
+            d.value = fallback;
+            form.appendChild(d);
+          } else if (!d.value) {
+            const fallback = document.querySelector('input[name="draft_id"]')?.value || '';
+            if (fallback) d.value = fallback;
+          }
+        } catch (e) { console.error('guided_builder_v2 submit sync error', e); }
+      }, true);
 
       const reloadCtxBtn = document.getElementById('reload-context-visual');
       if (reloadCtxBtn) {

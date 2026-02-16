@@ -88,11 +88,12 @@ validation_state/
 .experiments/
 
 # Local GUI web interface (keep local; don't commit yet)
-gui_launcher/
-requirements-gui.txt
-scripts/run_gui_launcher.py
-docs/dev/gui-launcher-spec.md
-docs/user/15-gui-launcher.md
+# NOTE: `gui_launcher` is now tracked for CI/debug; previously ignored.
+# gui_launcher/
+# requirements-gui.txt
+# scripts/run_gui_launcher.py
+# docs/dev/gui-launcher-spec.md
+# docs/user/15-gui-launcher.md
 
 # Local-only builder config artifacts (keep local)
 config/advanced_builder_defaults.py

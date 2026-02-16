@@ -274,13 +274,13 @@
       });
     }
 
-    // wire add buttons
+    // wire add buttons (guarded to avoid duplicate wiring)
     const addCtx = document.getElementById('add-context');
     const addSig = document.getElementById('add-signal');
     const addTrg = document.getElementById('add-trigger');
-    if (addCtx && ctxContainer) addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); commitSectionFromDOM('context'); });
-    if (addSig && sigContainer) addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); commitSectionFromDOM('signal'); });
-    if (addTrg && trgContainer) addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); commitSectionFromDOM('trigger'); });
+    if (addCtx && ctxContainer && !addCtx.dataset.wired) { addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); commitSectionFromDOM('context'); }); addCtx.dataset.wired = '1'; }
+    if (addSig && sigContainer && !addSig.dataset.wired) { addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); commitSectionFromDOM('signal'); }); addSig.dataset.wired = '1'; }
+    if (addTrg && trgContainer && !addTrg.dataset.wired) { addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); commitSectionFromDOM('trigger'); }); addTrg.dataset.wired = '1'; }
 
     // edits/removes: delegate to container and commit on change
     const delegateEvents = (container, section) => {
@@ -482,14 +482,14 @@
     renderRules(sigContainer, sig, 'signal');
     renderRules(trgContainer, trg, 'trigger');
 
-    // wire add buttons
+    // wire add buttons (guarded to avoid duplicate wiring)
     const addCtx = document.getElementById('add-context');
     const addSig = document.getElementById('add-signal');
     const addTrg = document.getElementById('add-trigger');
 
-    if (addCtx && ctxContainer) addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-    if (addSig && sigContainer) addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-    if (addTrg && trgContainer) addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+    if (addCtx && ctxContainer && !addCtx.dataset.wired) { addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); }); addCtx.dataset.wired = '1'; }
+    if (addSig && sigContainer && !addSig.dataset.wired) { addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); }); addSig.dataset.wired = '1'; }
+    if (addTrg && trgContainer && !addTrg.dataset.wired) { addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); }); addTrg.dataset.wired = '1'; }
 
     // delegate wiring for edits/removes
     wire(ctxContainer || document, form, ctxContainer, sigContainer, trgContainer);
@@ -1061,28 +1061,31 @@
       }
 
       const addContextBtn = document.getElementById('add-context');
-      if (addContextBtn) {
+      if (addContextBtn && !addContextBtn.dataset.wired) {
         addContextBtn.addEventListener('click', () => {
           if (ctxContainer) ctxContainer.appendChild(ruleRow('context', { type: 'price_vs_ma' }));
           syncHidden();
           schedule();
         });
+        addContextBtn.dataset.wired = '1';
       }
       const addSignalBtn = document.getElementById('add-signal');
-      if (addSignalBtn) {
+      if (addSignalBtn && !addSignalBtn.dataset.wired) {
         addSignalBtn.addEventListener('click', () => {
           if (sigContainer) sigContainer.appendChild(ruleRow('signal', { type: 'rsi_threshold' }));
           syncHidden();
           schedule();
         });
+        addSignalBtn.dataset.wired = '1';
       }
       const addTriggerBtn = document.getElementById('add-trigger');
-      if (addTriggerBtn) {
+      if (addTriggerBtn && !addTriggerBtn.dataset.wired) {
         addTriggerBtn.addEventListener('click', () => {
           if (trgContainer) trgContainer.appendChild(ruleRow('trigger', { type: 'prior_bar_break' }));
           syncHidden();
           schedule();
         });
+        addTriggerBtn.dataset.wired = '1';
       }
 
       function updateTriggerParamVisibility() {

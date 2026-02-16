@@ -851,7 +851,6 @@
             inputTextArea(b, 'Bull expr', 'bull_expr', rule?.bull_expr || '', 'e.g. close > sma(close, 200)');
             inputTextArea(b, 'Bear expr', 'bear_expr', rule?.bear_expr || '', 'e.g. close < sma(close, 200)');
           });
-        }
 
         // Signal blocks
         if (section === 'signal') {
@@ -1023,6 +1022,7 @@
         })();
 
         return row;
+      }
 
       const serialize = (container) => {
         const rules = [];

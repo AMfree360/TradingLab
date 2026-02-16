@@ -123,14 +123,7 @@
     <div style="margin-top:8px;">
       
 
-      <div id="trigger_pin_bar" style="margin-top:8px; display:none;">
-        <label>Pin wick/body ratio</label>
-        <input name="pin_wick_body" type="number" step="0.1" value="{{ draft.get('pin_wick_body') or 2.0 }}" />
-        <label>Opposite wick/body max</label>
-        <input name="pin_opp_wick_body_max" type="number" step="0.1" value="{{ draft.get('pin_opp_wick_body_max') or 1.0 }}" />
-        <label>Min body % of range</label>
-        <input name="pin_min_body_pct" type="number" step="0.01" value="{{ draft.get('pin_min_body_pct') or 0.2 }}" />
-      </div>
+      <!-- Per-trigger global parameter blocks removed - kept within per-row trigger blocks only. -->
 
       <div id="trigger_ma_reclaim" style="margin-top:8px; display:none;">
         <label>Trigger MA type</label>

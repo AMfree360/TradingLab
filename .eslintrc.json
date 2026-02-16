@@ -1,0 +1,27 @@
+{
+  "env": { "browser": true, "es2021": true },
+  "extends": "eslint:recommended",
+  "parserOptions": { "ecmaVersion": 12, "sourceType": "module" },
+  "globals": {
+    "FEATURE_FLAG": "readonly",
+    "addOpt": "readonly",
+    "inputText": "readonly",
+    "inputNumber": "readonly",
+    "inputTextArea": "readonly",
+    "section": "readonly",
+    "block": "readonly",
+    "select": "readonly",
+    "rule": "readonly",
+    "row": "readonly",
+    "fields": "readonly",
+    "typeSel": "readonly",
+    "tfSel": "readonly",
+    "syncHidden": "readonly",
+    "context_rules_json": "readonly",
+    "signal_rules_json": "readonly",
+    "trigger_rules_json": "readonly",
+    "Plotly": "readonly",
+    "fetch": "readonly"
+  },
+  "rules": {}
+}

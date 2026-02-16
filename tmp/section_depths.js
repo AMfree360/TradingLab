@@ -1,0 +1,1 @@
+const fs=require('fs'); const lines=fs.readFileSync('gui_launcher/static/js/guided_builder_v2.js','utf8').split('\n'); let depth=0; for(let i=0;i<lines.length;i++){ const ln=lines[i]; if(ln.includes('if (section')) console.log('LINE',i+1,'depth',depth,ln.trim()); for(const ch of ln){ if(ch==='{' ) depth++; else if(ch==='}') depth--; } }

@@ -241,6 +241,10 @@
     const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
     if (!form) return;
 
+    // If the advanced guided builder (preview body) is present, prefer its
+    // renderer to avoid duplicate/wrong wiring from this legacy module.
+    if (document.getElementById('effective-preview-body')) return;
+
     const ctxContainer = document.getElementById('context-rules');
     const sigContainer = document.getElementById('signal-rules');
     const trgContainer = document.getElementById('trigger-rules');
@@ -278,9 +282,18 @@
     const addCtx = document.getElementById('add-context');
     const addSig = document.getElementById('add-signal');
     const addTrg = document.getElementById('add-trigger');
-    if (addCtx && ctxContainer) addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); commitSectionFromDOM('context'); });
-    if (addSig && sigContainer) addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); commitSectionFromDOM('signal'); });
-    if (addTrg && trgContainer) addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); commitSectionFromDOM('trigger'); });
+    if (addCtx && ctxContainer && !addCtx.dataset.guidedV2Wired) {
+      addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); commitSectionFromDOM('context'); });
+      addCtx.dataset.guidedV2Wired = '1';
+    }
+    if (addSig && sigContainer && !addSig.dataset.guidedV2Wired) {
+      addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); commitSectionFromDOM('signal'); });
+      addSig.dataset.guidedV2Wired = '1';
+    }
+    if (addTrg && trgContainer && !addTrg.dataset.guidedV2Wired) {
+      addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); commitSectionFromDOM('trigger'); });
+      addTrg.dataset.guidedV2Wired = '1';
+    }
 
     // edits/removes: delegate to container and commit on change
     const delegateEvents = (container, section) => {
@@ -465,6 +478,10 @@
     const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
     if (!form) return;
 
+    // If the advanced guided builder (preview body) is present, prefer its
+    // renderer to avoid duplicate/wrong wiring from this legacy module.
+    if (document.getElementById('effective-preview-body')) return;
+
     const ctxContainer = document.getElementById('context-rules');
     const sigContainer = document.getElementById('signal-rules');
     const trgContainer = document.getElementById('trigger-rules');
@@ -487,9 +504,18 @@
     const addSig = document.getElementById('add-signal');
     const addTrg = document.getElementById('add-trigger');
 
-    if (addCtx && ctxContainer) addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-    if (addSig && sigContainer) addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-    if (addTrg && trgContainer) addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+    if (addCtx && ctxContainer && !addCtx.dataset.guidedV2Wired) {
+      addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+      addCtx.dataset.guidedV2Wired = '1';
+    }
+    if (addSig && sigContainer && !addSig.dataset.guidedV2Wired) {
+      addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+      addSig.dataset.guidedV2Wired = '1';
+    }
+    if (addTrg && trgContainer && !addTrg.dataset.guidedV2Wired) {
+      addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
+      addTrg.dataset.guidedV2Wired = '1';
+    }
 
     // delegate wiring for edits/removes
     wire(ctxContainer || document, form, ctxContainer, sigContainer, trgContainer);
@@ -816,6 +842,23 @@
           if (value != null) sel.value = value;
           parent.appendChild(sel);
         }
+          block('price_vs_ma', (b) => {
+            select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], rule?.ma_type || 'ema');
+            inputNumber(b, 'MA length', 'length', rule?.length ?? 200, { min: 1 });
+            select(b, 'Op', 'op', [['>=', '>='], ['<=', '<='], ['>', '>'], ['<', '<']], rule?.op || '>=');
+            inputNumber(b, 'Threshold', 'threshold', rule?.threshold ?? 0.01, { step: 0.0001, min: 0 });
+            b.appendChild(el('div', { class: 'muted', text: 'Price vs MA: compare price to a single MA.' }));
+          });
+          block('ma_stack', (b) => {
+            select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], rule?.ma_type || 'ema');
+            inputNumber(b, 'Fast MA', 'ma_fast', rule?.ma_fast ?? 20, { min: 1 });
+            inputNumber(b, 'Mid MA', 'ma_mid', rule?.ma_mid ?? 50, { min: 1 });
+            inputNumber(b, 'Slow MA', 'ma_slow', rule?.ma_slow ?? 200, { min: 1 });
+            select(b, 'Stack mode', 'stack_mode', [['none', 'None'], ['long_only', 'Long only'], ['short_only', 'Short only']], rule?.stack_mode || 'none');
+            inputNumber(b, 'Slope lookback', 'slope_lookback', rule?.slope_lookback ?? 10, { min: 1 });
+            inputNumber(b, 'Min MA dist %', 'min_ma_dist_pct', rule?.min_ma_dist_pct ?? 0.01, { step: 0.0001, min: 0 });
+            b.appendChild(el('div', { class: 'muted', text: 'MA Stack: configure multiple moving averages for trend detection.' }));
+          });
           block('ma_cross_state', (b) => {
             select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], rule?.ma_type || 'ema');
             inputNumber(b, 'Fast length', 'fast', rule?.fast ?? 20, { min: 1 });
@@ -929,6 +972,7 @@
         row.appendChild(fields);
 
         if (section === 'context') {
+          addOpt('ma_stack', 'MA Stack');
           addOpt('price_vs_ma', 'Trend: Price vs MA');
           addOpt('ma_cross_state', 'Trend: MA state (fast vs slow)');
           addOpt('atr_pct', 'Volatility: ATR% filter');
@@ -1125,28 +1169,45 @@
       }
 
       const addContextBtn = document.getElementById('add-context');
-      if (addContextBtn) {
+      if (addContextBtn && !addContextBtn.dataset.guidedV2Wired) {
         addContextBtn.addEventListener('click', () => {
-          if (ctxContainer) ctxContainer.appendChild(ruleRow('context', { type: 'price_vs_ma' }));
+          const primary = String(primaryContextSel?.value || 'ma_stack');
+          if (primary === 'ma_stack') {
+            if (maStackBlock) {
+              maStackBlock.style.display = '';
+              syncHidden();
+              schedule();
+              return;
+            }
+            // Fallback: if no global MA-stack block is present, insert a per-row ma_stack rule.
+            if (ctxContainer) ctxContainer.appendChild(ruleRow('context', { type: 'ma_stack' }));
+            syncHidden();
+            schedule();
+            return;
+          }
+          if (ctxContainer) ctxContainer.appendChild(ruleRow('context', defaultPrimaryContextRule(primary)));
           syncHidden();
           schedule();
         });
+        addContextBtn.dataset.guidedV2Wired = '1';
       }
       const addSignalBtn = document.getElementById('add-signal');
-      if (addSignalBtn) {
+      if (addSignalBtn && !addSignalBtn.dataset.guidedV2Wired) {
         addSignalBtn.addEventListener('click', () => {
           if (sigContainer) sigContainer.appendChild(ruleRow('signal', { type: 'rsi_threshold' }));
           syncHidden();
           schedule();
         });
+        addSignalBtn.dataset.guidedV2Wired = '1';
       }
       const addTriggerBtn = document.getElementById('add-trigger');
-      if (addTriggerBtn) {
+      if (addTriggerBtn && !addTriggerBtn.dataset.guidedV2Wired) {
         addTriggerBtn.addEventListener('click', () => {
           if (trgContainer) trgContainer.appendChild(ruleRow('trigger', { type: 'prior_bar_break' }));
           syncHidden();
           schedule();
         });
+        addTriggerBtn.dataset.guidedV2Wired = '1';
       }
 
       function updateTriggerParamVisibility() {
@@ -1156,7 +1217,6 @@
           if (!el) return;
           el.style.display = on ? '' : 'none';
         };
-        show('trigger_pin_bar', t === 'pin_bar');
         show('trigger_ma_reclaim', t === 'ma_reclaim');
         show('trigger_donchian', t === 'donchian_breakout');
         show('trigger_range', t === 'range_breakout');
@@ -1270,9 +1330,7 @@
           min_ma_dist_pct: num('min_ma_dist_pct'),
           trigger_type: val('trigger_type') || 'pin_bar',
           trigger_valid_for_bars: num('trigger_valid_for_bars'),
-          pin_wick_body: num('pin_wick_body'),
-          pin_opp_wick_body_max: num('pin_opp_wick_body_max'),
-          pin_min_body_pct: num('pin_min_body_pct'),
+          // Global pin-bar trigger params removed; per-row trigger params used instead.
           trigger_ma_type: val('trigger_ma_type') || 'ema',
           trigger_ma_len: num('trigger_ma_len'),
           trigger_don_len: num('trigger_don_len'),

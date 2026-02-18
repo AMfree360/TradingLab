@@ -1,0 +1,1 @@
+const fs=require('fs'); const src=fs.readFileSync('gui_launcher/static/js/guided_builder_v2.js','utf8'); const lines=src.split('\n'); const matches=[66,142,627,644,676,793,828,868,878,902,220]; for(const n of matches){ console.log('----',n,'----'); for(let i=Math.max(0,n-4); i<Math.min(lines.length,n+3); i++){ console.log((i+1).toString().padStart(4), lines[i]); } }

@@ -1,15 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Create Strategy (Guided) — V3 One Page</h1>
-  <p class="muted">All Guided Builder fields consolidated onto a single page for visual inspection. No V3 JS is loaded by default.</p>
-
-  <form class="card" method="post" action="/create-strategy-guided/step4" id="guided_onepage_form" novalidate>
-    <input type="hidden" name="template" value="builder_v3" />
-    <input type="hidden" name="draft_id" value="{{ draft_id or '' }}" />
-
-    <h2>Step 1 — Identity</h2>
-    <label>Strategy name</label>
-    <input name="name" type="text" value="{{ draft.name or '' }}" placeholder="e.g. rsi_breakout" required />
+  <div class="card">
+    <h1>Guided Builder — One Page (removed)</h1>
+    <p class="muted">This one-page inspection view has been deprecated and removed from the launcher. Use the Builder V3 SPA or the Guided Builder flow instead.</p>
+    <p><a href="/">Return to Launcher Home</a></p>
+  </div>
 
     <hr />
     <h2>Step 2 — Market</h2>

@@ -290,13 +290,9 @@ app.state.builder_v3_permission_checker = None
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.mount("/reports", StaticFiles(directory=str(REPO_ROOT / "reports")), name="reports")
 
-# Include Builder V3 API router (new endpoints)
-try:
-    from gui_launcher.builder_v3_routes import router as builder_v3_router
-    app.include_router(builder_v3_router)
-except Exception:
-    # If import fails, continue without v3 routes (safe for environments where file isn't ready)
-    pass
+# Builder V3 routes removed in branch `remove/builder-v3`.
+# Previously the app included `gui_launcher.builder_v3_routes` here.
+# Keeping flags on `app.state` for backward-compatibility if needed.
 
 runner = JobRunner()
 
@@ -372,38 +368,14 @@ def debug_requests(request: Request):
     return HTMLResponse("\n".join(html))
 
 
-@app.get("/builder-v3", response_class=HTMLResponse)
+@app.get("/builder-v3")
 def builder_v3_page(request: Request):
-    """Serve the Builder V3 single-page app template."""
-    try:
-        # If running under Cypress, serve a minimal template that avoids global
-        # `base.html` includes (analytics/fonts) which can hang external loads.
-        if request.query_params.get('cypress'):
-            return TEMPLATES.TemplateResponse("builder_v3_minimal.html", {"request": request})
-        return TEMPLATES.TemplateResponse("builder_v3.html", {"request": request})
-    except Exception:
-        # Fallback: simple HTML if template rendering fails
-        return HTMLResponse("<h1>Builder V3</h1><div id=\"builder-v3-root\"></div>")
+    """Builder V3 removed: redirect to launcher home."""
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse(url="/")
 
 
-@app.get("/builder-v3/v3-onepage", response_class=HTMLResponse)
-def builder_v3_onepage(request: Request, draft_id: str | None = None):
-    """Serve a consolidated Builder V3 one-page template (HTML-only) for inspection.
-
-    This page consolidates guided builder fields into a single form for visual
-    verification. The V3 JS SPA is not loaded here by default.
-    """
-    draft = DRAFTS.get(draft_id) if draft_id else {}
-    instruments = _guided_instruments()
-    return TEMPLATES.TemplateResponse(
-        "guided_builder_v3_onepage.html",
-        {
-            "request": request,
-            "draft": draft or {},
-            "draft_id": draft_id or "",
-            "instruments": instruments,
-        },
-    )
 
 
 def _is_safe_strategy_name(name: str) -> bool:
@@ -3039,13 +3011,10 @@ def _build_backtest_argv_from_inputs(
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return TEMPLATES.TemplateResponse(
-        request,
-        "home.html",
-        {
-            "title": "TradingLab Launcher",
-        },
-    )
+    try:
+        return TEMPLATES.TemplateResponse("home.html", {"request": request, "title": "TradingLab Launcher"})
+    except Exception:
+        return HTMLResponse("<h1>TradingLab Launcher</h1>")
 
 
 @app.get("/help", response_class=HTMLResponse)

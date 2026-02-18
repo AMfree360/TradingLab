@@ -1,0 +1,1 @@
+const fs=require('fs');const s=fs.readFileSync('gui_launcher/static/js/guided_builder_v2.js','utf8');const upto=s.split('\n').slice(0,964).join('\n');const count=(upto.match(/`/g)||[]).length; console.log('backticks up to 964:',count); console.log(count%2===0?'even':'odd');

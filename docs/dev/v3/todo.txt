@@ -1,0 +1,54 @@
+Phase 2 — UI Parity (Components)
+- Implement remaining Builder V3 UI components to reach functional parity with Builder V2:
+  - Triggers UI (trigger rules, types, timing)
+  - Stops (fixed stops, ATR-based, trailing stops)
+  - Trade Management (take-profit ladders, partial exits, scaling)
+  - Presets UI: TP/partials/trailing/calendar master-default copying
+  - Full form layout: unify field mapping, labels, tooltips
+  - Per-component unit tests and `StateStore` registration for validation mapping
+
+Phase 3 — Routing & Integration (IN-PROGRESS)
+- Make Builder V3 reachable and integrated:
+  DEPRECATED: Builder V3 removed. See branch `remove/builder-v3` for details.
+  - Add selection/menu link in `/create-strategy-guided` to choose Builder V3 (TODO)
+  - Ensure CSRF token exposure to `main.js` and API client (template already exposes token)
+
+Phase 4 — Save Semantics & Persistence (STARTED)
+- Replace `POST /api/builder_v3/save` stub with real save/commit flow:
+  - Server-side validation + guardrails before save (implemented: jsonschema validation)
+  - Persist `StrategySpec` to `research_specs/` via `_write_validated_spec_to_repo()` when possible (attempt added)
+  - Fallback to writing YAML directly or JSON draft when conversion fails (implemented)
+  - Return canonical `draft_id` and `next` URL; handle rename/overwrite semantics (partially implemented; needs tests)
+  - Add tests for save flows, permissions and error paths (TODO)
+
+Phase 5 — UX Polish & QA
+- Improve UX and coverage:
+  - Accessibility improvements and keyboard navigation for error summary
+  - Error grouping and focus management refinements
+  - Visual polish: spacing, labels, responsive behavior
+  - End-to-end tests (Cypress) for preview/validate/save flows
+  - Smoke-test checklist and recording steps for manual QA
+
+Phase 6 — Security & Operational Hardening
+- Production hardening tasks:
+  - Add CSRF protection for API endpoints where needed
+  - Rate-limit expensive endpoints (`/preview`, `/validate`)
+  - Review logging levels and sensitive-data handling
+  - Add config flags for dev vs prod (disable stubs, enable security)
+
+Phase 7 — Testing & CI
+- CI and test automation:
+  - Frontend unit tests: Jest for `ValidationEngine` and `StateStore`
+  - E2E tests: Cypress for key flows
+  - Integrate pytest, node frontend tests, and Cypress into CI pipeline
+
+Phase 8 — Documentation & Release
+- Docs and release readiness:
+  - Update `docs/dev/v3/IMPLEMENTATION_SPEC.md` and `API_CONTRACTS.md`
+  - Add developer README for Builder V3 and migration notes
+  - Changelog entry and release checklist
+  - Rollback/migration plan and minimal deployment notes
+
+Notes:
+- Prioritize Phase 2 and Phase 3 to make the UI usable by product reviewers.
+- Each phase should include automated tests and a short manual QA checklist.

@@ -30,7 +30,6 @@ def main() -> int:
     port = int(args.port) if int(args.port) != 0 else _pick_free_port(host)
 
     url = f"http://{host}:{port}/"
-    builder_v3_url = f"{url}builder-v3"
     if not args.no_browser:
         try:
             # open launcher home (dashboard) in a browser tab; do not auto-open Builder V3

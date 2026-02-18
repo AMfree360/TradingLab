@@ -734,7 +734,7 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         min_ma_dist_pct = 0.0
 
-    trigger_type = str(draft.get("trigger_type") or "pin_bar").strip().lower()
+    trigger_type = str(draft.get("trigger_type") if draft.get("trigger_type") is not None else "").strip().lower()
     try:
         trigger_valid_for_bars = int(draft.get("trigger_valid_for_bars") or 0)
     except Exception:
@@ -1707,7 +1707,7 @@ async def api_guided_builder_v2_preview(request: Request) -> JSONResponse:
         "slope_mode": str(payload.get("slope_mode") or "none"),
         "slope_lookback": payload.get("slope_lookback") or 10,
         "min_ma_dist_pct": payload.get("min_ma_dist_pct") or 0,
-        "trigger_type": str(payload.get("trigger_type") or "pin_bar"),
+        "trigger_type": str(payload.get("trigger_type") if payload.get("trigger_type") is not None else ""),
         "trigger_valid_for_bars": payload.get("trigger_valid_for_bars") or 0,
         "pin_wick_body": payload.get("pin_wick_body") or 2.0,
         "pin_opp_wick_body_max": payload.get("pin_opp_wick_body_max") or 1.0,
@@ -2187,7 +2187,7 @@ async def api_guided_builder_v2_setup_visual(request: Request) -> JSONResponse:
         "slope_mode": str(payload.get("slope_mode") or "none"),
         "slope_lookback": payload.get("slope_lookback") or 10,
         "min_ma_dist_pct": payload.get("min_ma_dist_pct") or 0,
-        "trigger_type": str(payload.get("trigger_type") or "pin_bar"),
+        "trigger_type": str(payload.get("trigger_type") if payload.get("trigger_type") is not None else ""),
         "pin_wick_body": payload.get("pin_wick_body") or 2.0,
         "pin_opp_wick_body_max": payload.get("pin_opp_wick_body_max") or 1.0,
         "pin_min_body_pct": payload.get("pin_min_body_pct") or 0.2,
@@ -5339,7 +5339,7 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
         slope_lookback = _parse_int("slope_lookback", int(draft.get("slope_lookback") or 10))
         min_ma_dist_pct = _parse_float("min_ma_dist_pct", float(draft.get("min_ma_dist_pct") or 0.0))
 
-        trigger_type = str(form_dict.get("trigger_type") or "pin_bar").strip().lower()
+        trigger_type = str(form_dict.get("trigger_type") if form_dict.get("trigger_type") is not None else "").strip().lower()
         trigger_valid_for_bars = _parse_int(
             "trigger_valid_for_bars", int(draft.get("trigger_valid_for_bars") or 0)
         )

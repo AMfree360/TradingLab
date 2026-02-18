@@ -1222,7 +1222,7 @@
       }
 
       function updateTriggerParamVisibility() {
-        const t = String(val('trigger_type') || 'pin_bar');
+        const t = String(val('trigger_type') || '');
         const show = (id, on) => {
           const el = document.getElementById(id);
           if (!el) return;
@@ -1339,7 +1339,7 @@
           slope_mode: val('slope_mode') || 'none',
           slope_lookback: num('slope_lookback'),
           min_ma_dist_pct: num('min_ma_dist_pct'),
-          trigger_type: val('trigger_type') || 'pin_bar',
+          trigger_type: val('trigger_type') || '',
           trigger_valid_for_bars: num('trigger_valid_for_bars'),
           // Global pin-bar trigger params removed; per-row trigger params used instead.
           trigger_ma_type: val('trigger_ma_type') || 'ema',

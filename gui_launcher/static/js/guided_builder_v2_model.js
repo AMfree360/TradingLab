@@ -21,7 +21,7 @@
       slope_mode: 'none',
       slope_lookback: 10,
       min_ma_dist_pct: 0,
-      trigger_type: 'pin_bar',
+      trigger_type: '',
       trigger_valid_for_bars: 0,
       pin_wick_body: 2.0,
       pin_opp_wick_body_max: 1.0,

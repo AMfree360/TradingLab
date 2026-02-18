@@ -81,10 +81,24 @@ class DataLoader:
     
     def _load_csv(self, file_path: Path, **kwargs) -> pd.DataFrame:
         """Load CSV file with automatic separator detection."""
+        # Determine encoding: prefer provided, else try utf-8 and fall back to latin-1
+        enc = kwargs.pop('encoding', None) or 'utf-8'
+
+        # Helper to retry with fallback encoding
+        def _open_with_fallback(mode='r'):
+            nonlocal enc
+            try:
+                return open(file_path, mode, encoding=enc, errors='strict')
+            except UnicodeDecodeError:
+                # Fallback to latin-1 for legacy files
+                enc = 'latin-1'
+                logger.warning(f"Falling back to encoding {enc} for file {file_path}")
+                return open(file_path, mode, encoding=enc, errors='replace')
+
         # First, check if file has the special format: timestamp;open;high;low;close;volume
         # (common in some NinjaTrader exports)
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with _open_with_fallback('r') as f:
                 first_line = f.readline().strip()
             
             # Check if the entire line is in format: "YYYYMMDD HHMMSS;O;H;L;C;V"
@@ -101,7 +115,7 @@ class DataLoader:
         # Check for Binance klines format (no header, comma-separated)
         # Format: Open time, Open, High, Low, Close, Volume, Close time, Quote volume, Trades, Taker buy base, Taker buy quote, Ignore
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with _open_with_fallback('r') as f:
                 first_line = f.readline().strip()
                 parts = first_line.split(',')
                 # Check if first column is a numeric timestamp (milliseconds)
@@ -123,8 +137,11 @@ class DataLoader:
         # Use detected separator unless overridden
         if 'sep' not in kwargs and 'delimiter' not in kwargs:
             kwargs['sep'] = sep
-        
-        logger.debug(f"Loading CSV with separator: '{sep}'")
+
+        # Ensure pandas uses our detected/negotiated encoding
+        kwargs['encoding'] = enc
+
+        logger.debug(f"Loading CSV with separator: '{sep}' encoding: '{enc}'")
         df = pd.read_csv(file_path, **kwargs)
         
         logger.debug(f"CSV loaded: {df.shape[0]} rows, {df.shape[1]} columns")

@@ -7,7 +7,7 @@ Common envelope
 { "ok": true|false, "message": "optional", "data": { ... }, "errors": { "field.path": "message" } }
 ```
 
-1) GET /api/builder_v3/metadata
+DEPRECATED: Builder V3 removed. API contracts archived.
 - Purpose: bootstrap frontend with advanced defaults and templates.
 - Success response example:
 ```json

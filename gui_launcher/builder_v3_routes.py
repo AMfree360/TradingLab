@@ -1,22 +1,15 @@
 """
-FastAPI router stubs for Builder V3 API endpoints.
-These are minimal stubs returning example responses. Backend devs should replace logic with real implementations.
+DEPRECATED: Builder V3 routes removed in branch `remove/builder-v3`.
+This file is retained as a placeholder to aid incremental rollbacks and
+should not be imported by the running application (the router is no
+longer included by `gui_launcher.app`).
+
+If you need the original routes for reference, restore from git history.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
+# File intentionally stubbed out.
 from typing import Any
-import sys
-import logging
-import json
-from pathlib import Path
-import uuid
-from datetime import datetime
-import time
-import hmac
-import hashlib
-import os
 
 # Simple in-memory rate limit store: {key: [timestamps]}
 _RATE_LIMIT_STORE: dict[str, list[float]] = {}

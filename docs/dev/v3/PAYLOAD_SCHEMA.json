@@ -25,12 +25,12 @@
     "context_rules": {
       "type": "array",
       "items": { "$ref": "#/definitions/rule" }
-    },
-    "signal_rules": {
-      "type": "array",
-      "items": { "$ref": "#/definitions/rule" }
-    },
-    "trigger_rules": {
+    {
+      "deprecated": true,
+      "message": "Builder V3 payload schema removed; this file is retained for history.",
+      "type": "object",
+      "properties": {}
+    }
       "type": "array",
       "items": { "$ref": "#/definitions/rule" }
     },

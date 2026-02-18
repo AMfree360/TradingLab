@@ -5,6 +5,10 @@ import gui_launcher.app as appmod
 client = TestClient(appmod.app)
 
 
+import pytest
+pytest.skip("Builder V3 removed; tests disabled", allow_module_level=True)
+
+
 def test_builder_v3_preview_basic():
     payload = {
         "entry_tf": "1h",

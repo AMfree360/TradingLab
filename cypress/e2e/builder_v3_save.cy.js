@@ -1,8 +1,10 @@
 describe('Builder V3 save conflict flow', () => {
   it('handles 409 conflict and overwrites when user chooses overwrite', () => {
     // stub metadata and validate endpoints before visiting the page
-    cy.intercept('GET', '/api/builder_v3/metadata', { ok: true, data: {} });
-    cy.intercept('POST', '/api/builder_v3/validate', { ok: true, valid: true, errors: [] });
+      // DEPRECATED: Builder V3 tests disabled (feature removed).
+      // See branch `remove/builder-v3` for context.
+      // cy.intercept('GET', '/api/builder_v3/metadata', { ok: true, data: {} });
+      // cy.intercept('POST', '/api/builder_v3/validate', { ok: true, valid: true, errors: [] });
     // stub common external CDNs to avoid page load hangs during CI
     cy.intercept('GET', 'https://cdn.plot.ly/**', { statusCode: 200, body: 'window.Plotly = { react: function(){} };' });
     cy.intercept('GET', 'https://cdn.jsdelivr.net/**', { statusCode: 200, body: '' });
@@ -15,14 +17,14 @@ describe('Builder V3 save conflict flow', () => {
 
     // First save responds 409 with suggested name, second call succeeds
     let first = true;
-    cy.intercept('POST', '/api/builder_v3/save', (req) => {
-      if (first) {
-        first = false;
-        req.reply({ statusCode: 409, body: { ok: false, message: 'Conflict', suggested_name: 'name_v2' } });
-      } else {
-        req.reply({ statusCode: 200, body: { ok: true, data: { next: '/create-strategy-guided/review' } } });
-      }
-    }).as('saveReq');
+      // cy.intercept('POST', '/api/builder_v3/save', (req) => {
+      //   if (first) {
+      //     first = false;
+      //     req.reply({ statusCode: 409, body: { ok: false, message: 'Conflict', suggested_name: 'name_v2' } });
+      //   } else {
+      //     req.reply({ statusCode: 200, body: { ok: true, data: { next: '/create-strategy-guided/review' } } });
+      //   }
+      // }).as('saveReq');
 
     // Instead of using `cy.visit` (which waits for the native `load` event and
     // can hang in this environment), fetch the minimal page HTML and write it

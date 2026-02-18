@@ -33,9 +33,8 @@ def main() -> int:
     builder_v3_url = f"{url}builder-v3"
     if not args.no_browser:
         try:
-            # open launcher home and Builder V3 in a second tab for convenience
+            # open launcher home (dashboard) in a browser tab; do not auto-open Builder V3
             webbrowser.open_new_tab(url)
-            webbrowser.open_new_tab(builder_v3_url)
         except Exception:
             pass
 

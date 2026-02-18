@@ -3,6 +3,9 @@ import json
 from pathlib import Path
 from fastapi.testclient import TestClient
 
+import pytest
+pytest.skip("Builder V3 removed; tests disabled", allow_module_level=True)
+
 from gui_launcher.app import app
 
 

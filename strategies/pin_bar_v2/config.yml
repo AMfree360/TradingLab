@@ -1,0 +1,43 @@
+strategy_name: pin_bar_v2
+description: '(guided template: builder_v2)'
+market:
+  symbol: BTCUSDT
+  exchange: binance
+  market_type: spot
+  base_timeframe: 1m
+  leverage: 1.0
+timeframes:
+  signal_tf: 15m
+  entry_tf: 15m
+moving_averages:
+  ma_fast:
+    enabled: true
+    length: 20
+  ma_slow:
+    enabled: true
+    length: 50
+alignment_rules:
+  long:
+    macd_bars_signal_tf: 0
+    macd_bars_entry_tf: 0
+  short:
+    macd_bars_signal_tf: 0
+    macd_bars_entry_tf: 0
+risk:
+  risk_per_trade_pct: 1.0
+  sizing_mode: account_size
+  account_size: 10000.0
+trade_limits:
+  max_trades_per_day: 1
+  max_daily_loss_pct: 3.0
+execution:
+  flatten_enabled: true
+  flatten_time: '21:30'
+  stop_signal_search_minutes_before: 30
+  use_intraday_margin: true
+filters: {}
+calendar_filters:
+  master_filters_enabled: true
+regime_filters: {}
+news_filter: {}
+volume_filters: {}

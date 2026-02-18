@@ -5,6 +5,10 @@ import gui_launcher.app as appmod
 client = TestClient(appmod.app)
 
 
+import pytest
+pytest.skip("Builder V3 removed; tests disabled", allow_module_level=True)
+
+
 def test_builder_v3_validate_valid_payload():
     payload = {
         "symbol": "AAPL",

@@ -194,11 +194,9 @@
       <div class="card card-error" style="margin-top: 12px;">{{ error }}</div>
     {% endif %}
 
-    <div style="margin-top:12px; display:flex; gap:8px; align-items:center;">
-      <button type="button" id="preview-now" class="secondary">Preview</button>
-    </div>
+    <!-- Preview button removed (diagnosis no longer needed). Manual testing planned. -->
 
-    <div id="guided-debug" style="margin-top:12px; padding:8px; background:#f9f9f9; border:1px solid #eee; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:160px; overflow:auto;"></div>
+    <div id="guided-debug" style="display:none; margin-top:12px; padding:8px; background:#f9f9f9; border:1px solid #eee; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:160px; overflow:auto;"></div>
 
     <!-- Setup visual temporarily disabled for debugging -->
     <!--
@@ -341,14 +339,34 @@
     });
   </script>
   <script>
-    // Global diagnostics: capture uncaught errors and fetch requests into #guided-debug
+    // Global diagnostics: hidden by default. Enable by adding ?guided_debug=1
+    // to the URL or setting `localStorage.guided_debug = '1'` in the console.
     (function () {
+      function isDebugEnabled() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('guided_debug') === '1') return true;
+          if (window.localStorage && window.localStorage.getItem('guided_debug') === '1') return true;
+        } catch (e) {}
+        return false;
+      }
+
+      // expose for other scripts
+      window.guidedBuilderV2DebugEnabled = isDebugEnabled();
+
+      // unhide the debug box only when enabled
+      if (window.guidedBuilderV2DebugEnabled) {
+        try { const dbgEl = document.getElementById('guided-debug'); if (dbgEl) dbgEl.style.display = 'block'; } catch (e) {}
+      }
+
       function logDbg(msg) {
         try {
-          const d = document.getElementById('guided-debug');
           const time = new Date().toISOString().replace('T',' ').replace('Z','');
-          if (d) d.textContent = time + ' ' + String(msg) + '\n' + d.textContent;
-          console.log('[guided-debug]', msg);
+          console.log('[guided-debug]', time, msg);
+          if (window.guidedBuilderV2DebugEnabled) {
+            const d = document.getElementById('guided-debug');
+            if (d) d.textContent = time + ' ' + String(msg) + '\n' + d.textContent;
+          }
         } catch (e) { console.log('dbg log failed', e); }
       }
 
@@ -361,7 +379,7 @@
       if (window.fetch) {
         const _fetch = window.fetch.bind(window);
         window.fetch = async function (url, opts) {
-          try { logDbg('fetch -> ' + String(url) + ' body=' + (opts && opts.body ? (String(opts.body).slice(0,1000)) : '<none>')); } catch (e) {}
+          try { logDbg('fetch -> ' + String(url) + ' body=' + (opts && opts.body ? (String(opts.body).slice(0,1000)) : '<none>')) } catch (e) {}
           const res = await _fetch(url, opts);
           try { logDbg('fetch resp -> ' + String(url) + ' status=' + (res && res.status)); } catch (e) {}
           return res;

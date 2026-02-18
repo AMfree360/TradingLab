@@ -209,7 +209,7 @@ Refer to `FILES_NEEDED.md` for the complete list recommended for a full implemen
 ## 6. Implementation steps & integration instructions (recommended)
 1. Backend: implement `GET /api/builder_v3/metadata` endpoint. Return `advanced_defaults` resolved per symbol.
 2. Backend: implement `POST /api/builder_v3/preview` using builder logic to produce textual preview. Return `ok` envelope.
-3. Backend: implement `context_visual` and `setup_visual` returning Plotly `fig` objects.
+DEPRECATED: Builder V3 removed. Implementation spec archived; do not follow for new work.
 4. Frontend: implement modular `StateStore` + `ApiClient`. Wire UI components to state.
 5. Frontend: implement `PreviewPanel` and hook up debounced calls to preview/visual endpoints, respecting CSRF token.
 6. Frontend: implement client validation using `PAYLOAD_SCHEMA.json` and `ValidationEngine` for guardrails.

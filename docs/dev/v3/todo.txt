@@ -9,7 +9,7 @@ Phase 2 — UI Parity (Components)
 
 Phase 3 — Routing & Integration (IN-PROGRESS)
 - Make Builder V3 reachable and integrated:
-  - Add GET `/builder-v3` rendering `gui_launcher/templates/builder_v3.html` (route added)
+  DEPRECATED: Builder V3 removed. See branch `remove/builder-v3` for details.
   - Add selection/menu link in `/create-strategy-guided` to choose Builder V3 (TODO)
   - Ensure CSRF token exposure to `main.js` and API client (template already exposes token)
 

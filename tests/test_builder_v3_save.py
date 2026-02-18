@@ -1,3 +1,6 @@
+import pytest
+pytest.skip("Builder V3 removed; tests disabled", allow_module_level=True)
+
 import os
 import re
 import json

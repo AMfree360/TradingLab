@@ -289,6 +289,51 @@ app.state.builder_v3_permission_checker = None
 # Explicitly mark Builder V3 as disabled in this branch - assets/routes are archived.
 app.state.builder_v3_enabled = False
 
+# Runtime debug gate for guided v2 debug persistence. We read defaults from
+# `config/defaults.yml` under `gui_debug` and allow environment variables to
+# override. This lets developers set debug behavior centrally in config.
+app.state.guided_v2_debug = False
+app.state.guided_v2_debug_log_dir = str((REPO_ROOT / "tmp" / "guided_capture").resolve())
+app.state.guided_v2_debug_persist = False
+try:
+    import yaml
+    cfg_path = (REPO_ROOT / "config" / "defaults.yml").resolve()
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8", errors="replace")) or {}
+    gui_dbg = raw.get("gui_debug") if isinstance(raw, dict) else None
+    if isinstance(gui_dbg, dict):
+        try:
+            cfg_enabled = bool(gui_dbg.get("enabled"))
+            app.state.guided_v2_debug = cfg_enabled
+        except Exception:
+            pass
+        try:
+            log_dir = gui_dbg.get("log_dir")
+            if isinstance(log_dir, str) and log_dir.strip():
+                # If relative, resolve under repo root
+                p = Path(log_dir)
+                if not p.is_absolute():
+                    p = (REPO_ROOT / p).resolve()
+                app.state.guided_v2_debug_log_dir = str(p)
+        except Exception:
+            pass
+        try:
+            app.state.guided_v2_debug_persist = bool(gui_dbg.get("persist_beacon"))
+        except Exception:
+            pass
+except Exception:
+    pass
+
+# Environment variables override YAML defaults when provided.
+if str(os.environ.get("GUIDED_V2_DEBUG", "")).strip():
+    app.state.guided_v2_debug = str(os.environ.get("GUIDED_V2_DEBUG", "false")).lower() in ("1", "true", "yes")
+if str(os.environ.get("GUIDED_V2_DEBUG_LOG_DIR", "")).strip():
+    p = Path(os.environ.get("GUIDED_V2_DEBUG_LOG_DIR"))
+    if not p.is_absolute():
+        p = (REPO_ROOT / p).resolve()
+    app.state.guided_v2_debug_log_dir = str(p)
+if str(os.environ.get("GUIDED_V2_DEBUG_PERSIST", "")).strip():
+    app.state.guided_v2_debug_persist = str(os.environ.get("GUIDED_V2_DEBUG_PERSIST", "false")).lower() in ("1", "true", "yes")
+
 # Static + reports
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.mount("/reports", StaticFiles(directory=str(REPO_ROOT / "reports")), name="reports")
@@ -392,6 +437,28 @@ async def debug_beacon(request: Request):
             }, ensure_ascii=False))
         except Exception:
             print('[guided-debug] debug/beacon -> content_type=', content_type, 'len=', len(raw))
+        # Persist raw debug beacon payload to disk when runtime debug enabled
+        try:
+            if app.state.guided_v2_debug and app.state.guided_v2_debug_persist:
+                try:
+                    out_dir = Path(str(app.state.guided_v2_debug_log_dir))
+                except Exception:
+                    out_dir = REPO_ROOT.joinpath('tmp', 'guided_capture')
+                try:
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+                ts = int(time.time() * 1000)
+                fname = out_dir.joinpath(f"debug_beacon_{ts}.log")
+                try:
+                    with open(fname, 'wb') as fh:
+                        header = (f"ts: {time.strftime('%Y-%m-%d %H:%M:%S')}\ncontent_type: {content_type}\nlen: {len(raw)}\n\n").encode('utf-8')
+                        fh.write(header)
+                        fh.write(raw)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     except Exception as e:
         try:
             print('[guided-debug] debug/beacon read failed', e)
@@ -5444,6 +5511,40 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
 
     form = await request.form()
     form_dict = {k: v for k, v in form.items()}
+    # Persist server-side copy of incoming payload for post-mortem harness analysis.
+    try:
+        from datetime import datetime
+        import pathlib
+        ts = datetime.utcnow().isoformat().replace(':', '-')
+        out_dir = pathlib.Path('tmp/guided_capture')
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = out_dir / f'server_received_{ts}.log'
+        try:
+            with fname.open('wb') as fh:
+                # write headers and a utf-8 preview of the body if available
+                try:
+                    raw = raw_body
+                except NameError:
+                    raw = None
+                hdr = (f"ts={datetime.utcnow().isoformat()}\ncontent_type={request.headers.get('content-type')}\n\n").encode('utf-8')
+                fh.write(hdr)
+                if raw is None:
+                    try:
+                        fh.write(str(form_dict).encode('utf-8', errors='replace'))
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        fh.write(raw)
+                    except Exception:
+                        try:
+                            fh.write(str(raw).encode('utf-8', errors='replace'))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+    except Exception:
+        pass
     # Debug: log incoming rule JSONs to help diagnose missing-rules on submit
     try:
         import json

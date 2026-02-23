@@ -30,6 +30,23 @@
     {% block content %}{% endblock %}
   </main>
 
+  <script>
+    // Expose guided-v2 debug configuration to client-side scripts. These are
+    // set from server-side state and controlled via config/defaults.yml or
+    // environment variables.
+    (function(){
+      try {
+        window.__GUIDED_V2_DEBUG = {{ 'true' if request.app.state.guided_v2_debug else 'false' }};
+      } catch (e) {
+        window.__GUIDED_V2_DEBUG = false;
+      }
+      try {
+        window.__GUIDED_V2_DEBUG_LOG_DIR = "{{ request.app.state.guided_v2_debug_log_dir }}";
+      } catch (e) {
+        window.__GUIDED_V2_DEBUG_LOG_DIR = "/tmp/guided_capture";
+      }
+    })();
+  </script>
   <script src="/static/js/theme.js"></script>
 </body>
 </html>

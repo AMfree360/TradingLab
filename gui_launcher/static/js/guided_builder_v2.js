@@ -5,6 +5,11 @@
 */
 (function () {
   const FEATURE_FLAG = { volume: true };
+  // Runtime debug gate: set `window.__GUIDED_V2_DEBUG = true` in the console
+  // or via test harness to enable debug persistence (localStorage / window globals).
+  const GUIDED_V2_DEBUG = (typeof window !== 'undefined' && window.__GUIDED_V2_DEBUG === true) || (typeof process !== 'undefined' && process && process.env && process.env.GUIDED_V2_DEBUG === '1');
+  const GUIDED_V2_DEBUG_LOG_DIR = (typeof window !== 'undefined' && window.__GUIDED_V2_DEBUG_LOG_DIR) || null;
+  try { if (GUIDED_V2_DEBUG) { console.log('[guided-debug] GUIDED_V2_DEBUG enabled; server debug log dir:', GUIDED_V2_DEBUG_LOG_DIR); } } catch (e) {}
   try { console.log('[guided-debug] guided_builder_v2.js loaded (workspace edition)'); } catch (e) {}
 
   // Global ensure-submit helper: synchronous DOM/state -> hidden sync.
@@ -88,7 +93,11 @@
       } catch (ee) {}
       const elH = ensureHidden(form, id);
       const stamp = (new Date()).toISOString();
+      // Always write the hidden input value (functional). Only perform
+      // debug persistence (window globals / localStorage / extra logging)
+      // when runtime debug is explicitly enabled.
       elH.value = value;
+      if (!GUIDED_V2_DEBUG) return;
       // capture a trimmed stack to help identify the caller path
       let stack = null;
       try {
@@ -109,12 +118,149 @@
           window.__guided_v2_write_history.push(rec);
           if (window.__guided_v2_write_history.length > 200) window.__guided_v2_write_history.shift();
         } catch (ee) {}
+        try {
+          // Persist debug write history so it survives navigation (useful for test harnesses)
+          try {
+            if (typeof localStorage !== 'undefined') {
+              try { localStorage.setItem('__guided_v2_write_history', JSON.stringify(window.__guided_v2_write_history || [])); } catch (e) {}
+              try { localStorage.setItem('__guided_v2_last_write', JSON.stringify(window.__guided_v2_last_write || null)); } catch (e) {}
+            }
+          } catch (ee) {}
+        } catch (ee) {}
       } catch (e) {}
     } catch (e) { /* ignore */ }
   }
 
   function parseJsonSafe(txt) {
     try { const p = JSON.parse(String(txt || '[]')); return Array.isArray(p) ? p : []; } catch (e) { return []; }
+  }
+
+  // Wait until the next animation frames have run (double rAF) to give
+  // the renderer a chance to apply DOM updates. Falls back to setTimeout
+  // when rAF isn't available.
+  function afterNextFrame(fn) {
+    try {
+      if (typeof requestAnimationFrame !== 'function') return setTimeout(fn, 0);
+      requestAnimationFrame(() => {
+        try { requestAnimationFrame(fn); } catch (e) { setTimeout(fn, 0); }
+      });
+    } catch (e) { try { setTimeout(fn, 0); } catch (ee) {} }
+  }
+
+  // Force a synchronous final-pre-submit write of the three rule hidden inputs.
+  // Exposed globally as a small helper so render/subscribe code can call it
+  // when a submit is pending to deterministically persist the latest DOM.
+  function invokeFinalPreSubmitWrites(f) {
+    try {
+      if (!f) return;
+      const ctxContainer = f.querySelector ? f.querySelector('#context-rules') : document.getElementById('context-rules');
+      const sigContainer = f.querySelector ? f.querySelector('#signal-rules') : document.getElementById('signal-rules');
+      const trgContainer = f.querySelector ? f.querySelector('#trigger-rules') : document.getElementById('trigger-rules');
+      // Snapshot the DOM containers (innerHTML + visible field values) to localStorage
+      try {
+        function snapshotContainer(container) {
+          if (!container) return null;
+          const fields = [];
+          try {
+            const els = Array.from(container.querySelectorAll('select,input,textarea,[data-field],[data-key]'));
+            for (const e of els) {
+              const df = e.getAttribute('data-field') || e.getAttribute('data-key') || null;
+              let val = null;
+              try {
+                if (e.type === 'checkbox') val = !!e.checked;
+                else val = e.value;
+              } catch (ee) { val = null; }
+              fields.push({ tag: e.tagName, dataField: df, value: val });
+            }
+          } catch (ee) {}
+          return { innerHTML: container.innerHTML, fields: fields };
+        }
+        const snap = {
+          ts: (new Date()).toISOString(),
+          form: { id: f.id || null, name: f.name || null, action: f.action || null },
+          ctx: snapshotContainer(ctxContainer),
+          sig: snapshotContainer(sigContainer),
+          trg: snapshotContainer(trgContainer)
+        };
+        if (GUIDED_V2_DEBUG) {
+          try { window.__guided_v2_last_dom_snapshot = snap; } catch (ee) {}
+          try {
+            if (!Array.isArray(window.__guided_v2_dom_snapshots)) window.__guided_v2_dom_snapshots = [];
+            window.__guided_v2_dom_snapshots.push(snap);
+            if (window.__guided_v2_dom_snapshots.length > 20) window.__guided_v2_dom_snapshots.shift();
+          } catch (ee) {}
+          try { if (typeof localStorage !== 'undefined') localStorage.setItem('__guided_v2_dom_snapshot', JSON.stringify(snap)); } catch (ee) {}
+          try { if (typeof localStorage !== 'undefined') localStorage.setItem('__guided_v2_dom_snapshots', JSON.stringify(window.__guided_v2_dom_snapshots || [])); } catch (ee) {}
+          try { console.log('[guided-debug] dom-snapshot saved', snap.ts, f.id || f.name || f.action); } catch (ee) {}
+        }
+      } catch (ee) {}
+
+      try { writeHiddenStamped(f, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer)), 'final-pre-submit'); } catch (e) {}
+      try { writeHiddenStamped(f, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer)), 'final-pre-submit'); } catch (e) {}
+      try { writeHiddenStamped(f, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer)), 'final-pre-submit'); } catch (e) {}
+    } catch (e) { /* best-effort */ }
+  }
+  try { window.__guided_v2_invoke_final_pre_write = invokeFinalPreSubmitWrites; } catch (e) {}
+
+  // Prefer a DOM-appropriate serializer. Some renderers use class-based
+  // markup (serializeRulesFromDOM) while others (advanced renderer) use a
+  // minimal data-* schema (serializeRulesFromDOMMinimal). Use the minimal
+  // serializer when present, otherwise fall back to the class-based one.
+  function canonicalSerialize(container) {
+    try {
+      if (typeof serializeRulesFromDOMMinimal === 'function') {
+        try { const m = serializeRulesFromDOMMinimal(container); if (Array.isArray(m)) return m; } catch (e) {}
+      }
+      if (typeof serializeRulesFromDOM === 'function') {
+        try { const d = serializeRulesFromDOM(container); if (Array.isArray(d) && d.length > 0) return d; } catch (e) {}
+      }
+      // If prior serializers returned nothing but rows exist, attempt the
+      // tolerant inline fallback to capture advanced renderer markup.
+      try {
+        const hasRows = container && container.querySelector && container.querySelectorAll && container.querySelectorAll('.rule-row') && container.querySelectorAll('.rule-row').length > 0;
+        if (hasRows) {
+          const fb = canonicalSerializeFallback(container);
+          if (Array.isArray(fb)) return fb;
+        }
+      } catch (e) {}
+    } catch (e) {}
+    return [];
+  }
+
+  // Best-effort inline minimal serializer used when the dedicated minimal
+  // serializer isn't present. This tolerantly reads rows and supports
+  // controls annotated with `data-field` or `data-key` so advanced renderers
+  // which don't populate `.rule-type` selects still serialize correctly.
+  function canonicalSerializeFallback(container) {
+    const out = [];
+    try {
+      if (!container) return out;
+      const rows = Array.from(container.querySelectorAll('.rule-row'));
+      for (const r of rows) {
+        try {
+          const typeEl = r.querySelector('.rule-type') || r.querySelector('[data-type]') || r.querySelector('[data-field="type"]') || r.querySelector('select[name="type"]');
+          const type = typeEl ? (typeEl.value || typeEl.getAttribute && (typeEl.getAttribute('data-type') || typeEl.getAttribute('data-field')) || '') : '';
+          const rule = { type: String(type || '') };
+          const tfEl = r.querySelector('.rule-tf') || r.querySelector('[data-tf]') || r.querySelector('select[name="tf"]'); if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = tfEl.value;
+          const validEl = r.querySelector('.rule-valid') || r.querySelector('[data-valid]') || r.querySelector('input[name="valid_for_bars"]'); if (validEl && validEl.value !== '') { const n = Number(validEl.value); if (Number.isFinite(n)) rule.valid_for_bars = n; }
+          // collect params from .param, data-field or data-key
+          const params = r.querySelectorAll('.param, [data-field], [data-key]');
+          for (const p of Array.from(params)) {
+            try {
+              const k = p.getAttribute && (p.getAttribute('data-key') || p.getAttribute('data-field') || p.getAttribute('name'));
+              if (!k) continue;
+              let v = null;
+              if (p.type === 'checkbox') v = !!p.checked;
+              else v = p.value;
+              if (p.type === 'number') { const n = Number(v); rule[k] = Number.isFinite(n) ? n : v; } else { rule[k] = v; }
+            } catch (ee) { /* ignore per-param errors */ }
+          }
+          const sideEl = r.querySelector('.rule-side') || r.querySelector('[data-side]') || r.querySelector('select[name="side"]'); if (sideEl && sideEl.value) rule.side = String(sideEl.value).trim().toLowerCase();
+          out.push(rule);
+        } catch (e) { /* per-row best-effort */ }
+      }
+    } catch (e) { /* ignore */ }
+    return out;
   }
 
   function renderParamsForType(container, section, type, rule) {
@@ -285,7 +431,7 @@
     try {
       const container = document.getElementById(section + '-rules');
       if (!container || !window.GuidedBuilderV2State) return;
-      const rules = serializeRulesFromDOM(container);
+      const rules = canonicalSerialize(container);
       window.GuidedBuilderV2State.set(section + '_rules', rules);
     } catch (e) { console.error('commitSectionFromDOM', e); }
   }
@@ -315,13 +461,13 @@
       const sigH = ensureHidden(form, 'signal_rules_json');
       const trgH = ensureHidden(form, 'trigger_rules_json');
       try {
-        writeHiddenStamped(form, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []), 'dom-sync');
+        writeHiddenStamped(form, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer)), 'dom-sync');
       } catch (e) { writeHiddenStamped(form, 'context_rules_json', '[]', 'dom-sync-fallback'); }
       try {
-        writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []), 'dom-sync');
+        writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer)), 'dom-sync');
       } catch (e) { writeHiddenStamped(form, 'signal_rules_json', '[]', 'dom-sync-fallback'); }
       try {
-        writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []), 'dom-sync');
+        writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer)), 'dom-sync');
       } catch (e) { writeHiddenStamped(form, 'trigger_rules_json', '[]', 'dom-sync-fallback'); }
     } catch (e) { /* best-effort */ }
   }
@@ -395,7 +541,7 @@
           const origSubmit = proto.submit;
           const origRequestSubmit = proto.requestSubmit;
 
-          function finalSync(f) {
+          function finalSync(f, cb) {
             try {
               // best-effort: commit pending DOM sections
               try { commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger'); } catch (e) {}
@@ -407,79 +553,130 @@
                 const sigContainer = f.querySelector ? f.querySelector('#signal-rules') : document.getElementById('signal-rules');
                 const trgContainer = f.querySelector ? f.querySelector('#trigger-rules') : document.getElementById('trigger-rules');
                 // Attempt to send the payload via sendBeacon as a guaranteed-before-unload delivery.
+                // Defer beacon/XHR and final hidden-writes until the next animation frames
+                // so the renderer has a chance to apply any pending DOM updates.
                 try {
-                  let beaconOk = false;
-                  const url = (window.__guided_v2_debug_beacon_url || (f.action || window.location.href));
-                  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-                    try {
-                      const bd = new FormData();
-                      const draftEl = f.querySelector && (f.querySelector('input[name="draft_id"]') || f.querySelector('#draft_id'));
-                      const draftId = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
-                      bd.append('draft_id', draftId);
-                      bd.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []));
-                      bd.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []));
-                      bd.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []));
-                      beaconOk = !!navigator.sendBeacon(url, bd);
-                      try { console.log('[guided-debug] sendBeacon ->', beaconOk, url); } catch (e) {}
-                    } catch (be) { try { console.log('[guided-debug] sendBeacon failed', be && be.message); } catch (e) {} }
-                  }
-                  // If beacon wasn't sent or isn't available, do a synchronous XHR as a last-ditch fallback.
-                  if (!beaconOk) {
-                    try {
-                      const params = new URLSearchParams();
-                      const draftEl2 = f.querySelector && (f.querySelector('input[name="draft_id"]') || f.querySelector('#draft_id'));
-                      const draftId2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
-                      params.append('draft_id', draftId2);
-                      params.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []));
-                      params.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []));
-                      params.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []));
-                      try { console.log('[guided-debug] final-pre-submit syncXHR ->', url, params.toString().slice(0,200)); } catch (e) {}
-                      const xhr = new XMLHttpRequest();
-                      xhr.open('POST', url, false); // synchronous
-                      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
-                      xhr.send(params.toString());
-                      try { console.log('[guided-debug] final-pre-submit syncXHR status ->', xhr.status); } catch (e) {}
-                    } catch (sx) { try { console.log('[guided-debug] final-pre-submit syncXHR failed', sx && sx.message); } catch (e) {} }
-                  }
-                } catch (enne) { try { console.log('[guided-debug] final-pre-submit beacon/xhr error', enne && enne.message); } catch (e) {} }
-                writeHiddenStamped(f, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []), 'final-pre-submit');
-                writeHiddenStamped(f, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []), 'final-pre-submit');
-                writeHiddenStamped(f, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []), 'final-pre-submit');
+                  afterNextFrame(function () {
+                    // Another microtask tick after rAF to allow pending microtask DOM updates
+                    Promise.resolve().then(function () {
+                      // Schedule a macrotask so layout/painting and any late microtasks
+                      // have a final chance to run before we serialize and write.
+                      setTimeout(function () {
+                        try {
+                          let beaconOk = false;
+                          const url = (window.__guided_v2_debug_beacon_url || (f.action || window.location.href));
+                          if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+                            try {
+                              const draftEl = f.querySelector && (f.querySelector('input[name="draft_id"]') || f.querySelector('#draft_id'));
+                              const draftId = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
+                              const ctxHidden = f.querySelector && f.querySelector('#context_rules_json');
+                              const sigHidden = f.querySelector && f.querySelector('#signal_rules_json');
+                              const trgHidden = f.querySelector && f.querySelector('#trigger_rules_json');
+                              const ctxVal = ctxHidden && ctxHidden.value !== undefined ? parseJsonSafe(ctxHidden.value) : canonicalSerialize(ctxContainer);
+                              const sigVal = sigHidden && sigHidden.value !== undefined ? parseJsonSafe(sigHidden.value) : canonicalSerialize(sigContainer);
+                              const trgVal = trgHidden && trgHidden.value !== undefined ? parseJsonSafe(trgHidden.value) : canonicalSerialize(trgContainer);
+                              const payload = { draft_id: draftId, context_rules: ctxVal, signal_rules: sigVal, trigger_rules: trgVal };
+                              const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+                              beaconOk = !!navigator.sendBeacon(url, blob);
+                              try { console.log('[guided-debug] sendBeacon ->', beaconOk, url, { ctxLen: JSON.stringify(ctxVal).length, sigLen: JSON.stringify(sigVal).length, trgLen: JSON.stringify(trgVal).length }); } catch (e) {}
+                            } catch (be) { try { console.log('[guided-debug] sendBeacon failed', be && be.message); } catch (e) {} }
+                          }
+                          if (!beaconOk) {
+                            try {
+                              const params = new URLSearchParams();
+                              const draftEl2 = f.querySelector && (f.querySelector('input[name="draft_id"]') || f.querySelector('#draft_id'));
+                              const draftId2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
+                              const ctxHidden2 = f.querySelector && f.querySelector('#context_rules_json');
+                              const sigHidden2 = f.querySelector && f.querySelector('#signal_rules_json');
+                              const trgHidden2 = f.querySelector && f.querySelector('#trigger_rules_json');
+                              const ctxVal2 = ctxHidden2 && ctxHidden2.value !== undefined ? ctxHidden2.value : JSON.stringify(canonicalSerialize(ctxContainer));
+                              const sigVal2 = sigHidden2 && sigHidden2.value !== undefined ? sigHidden2.value : JSON.stringify(canonicalSerialize(sigContainer));
+                              const trgVal2 = trgHidden2 && trgHidden2.value !== undefined ? trgHidden2.value : JSON.stringify(canonicalSerialize(trgContainer));
+                              params.append('draft_id', draftId2);
+                              params.append('context_rules_json', ctxVal2);
+                              params.append('signal_rules_json', sigVal2);
+                              params.append('trigger_rules_json', trgVal2);
+                              try { console.log('[guided-debug] final-pre-submit syncXHR ->', url, params.toString().slice(0,200)); } catch (e) {}
+                              const xhr = new XMLHttpRequest(); xhr.open('POST', url, false); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8'); xhr.send(params.toString());
+                              try { console.log('[guided-debug] final-pre-submit syncXHR status ->', xhr.status); } catch (e) {}
+                            } catch (sx) { try { console.log('[guided-debug] final-pre-submit syncXHR failed', sx && sx.message); } catch (e) {} }
+                          }
+                          try { console.log('[guided-debug] SERIALIZE-DOM (finalSync - pre-final-writes) ' + JSON.stringify({ ctxSerialized: JSON.stringify(canonicalSerialize(ctxContainer)), ctxInner: (ctxContainer||{}).innerHTML, sigSerialized: JSON.stringify(canonicalSerialize(sigContainer)), sigInner: (sigContainer||{}).innerHTML, trgSerialized: JSON.stringify(canonicalSerialize(trgContainer)), trgInner: (trgContainer||{}).innerHTML })); } catch (e) {}
+                          // Capture a DOM snapshot at this exact moment for debugging (fields + innerHTML)
+                          try {
+                            function _snapshotContainer(container) {
+                              if (!container) return null;
+                              const fields = [];
+                              try {
+                                const els = Array.from(container.querySelectorAll('select,input,textarea,[data-field],[data-key]'));
+                                for (const e of els) {
+                                  const df = e.getAttribute('data-field') || e.getAttribute('data-key') || null;
+                                  let val = null;
+                                  try { if (e.type === 'checkbox') val = !!e.checked; else val = e.value; } catch (ee) { val = null; }
+                                  fields.push({ tag: e.tagName, dataField: df, value: val });
+                                }
+                              } catch (ee) {}
+                              return { innerHTML: container.innerHTML, fields: fields };
+                            }
+                            const snap2 = { ts: (new Date()).toISOString(), form: { id: f.id || null, name: f.name || null, action: f.action || null }, ctx: _snapshotContainer(ctxContainer), sig: _snapshotContainer(sigContainer), trg: _snapshotContainer(trgContainer) };
+                            if (GUIDED_V2_DEBUG) {
+                              try { window.__guided_v2_last_dom_snapshot = snap2; } catch (ee) {}
+                              try { if (!Array.isArray(window.__guided_v2_dom_snapshots)) window.__guided_v2_dom_snapshots = []; window.__guided_v2_dom_snapshots.push(snap2); if (window.__guided_v2_dom_snapshots.length > 20) window.__guided_v2_dom_snapshots.shift(); } catch (ee) {}
+                              try { if (typeof localStorage !== 'undefined') localStorage.setItem('__guided_v2_dom_snapshot', JSON.stringify(snap2)); } catch (ee) {}
+                              try { if (typeof localStorage !== 'undefined') localStorage.setItem('__guided_v2_dom_snapshots', JSON.stringify(window.__guided_v2_dom_snapshots || [])); } catch (ee) {}
+                              try { console.log('[guided-debug] dom-snapshot saved (finalSync)', snap2.ts); } catch (ee) {}
+                            }
+                          } catch (ee) {}
+                          writeHiddenStamped(f, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer)), 'final-pre-submit');
+                          writeHiddenStamped(f, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer)), 'final-pre-submit');
+                          writeHiddenStamped(f, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer)), 'final-pre-submit');
+                          try { if (typeof cb === 'function') cb(); } catch (e) {}
+                        } catch (enne) { try { console.log('[guided-debug] final-pre-submit beacon/xhr error', enne && enne.message); } catch (e) {} }
+                      }, 0);
+                    }).catch(function (err) { try { console.log('[guided-debug] finalSync microtask error', err && err.message); } catch (e) {} });
+                  });
+                } catch (e) {
+                  try { syncHiddenFromState(f, window.GuidedBuilderV2State && window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } catch (e2) {}
+                  try { if (typeof cb === 'function') cb(); } catch (e) {}
+                }
               } catch (e) {
                 try { syncHiddenFromState(f, window.GuidedBuilderV2State && window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } catch (e2) {}
+                try { if (typeof cb === 'function') cb(); } catch (e) {}
               }
             } catch (e) { /* ignore */ }
           }
 
           proto.submit = function () {
             try {
-              try { window.__guided_v2_in_submit = true; } catch (e) {}
-              finalSync(this);
+              finalSync(this, () => {
+                try { window.__guided_v2_in_submit = true; } catch (e) {}
+                try {
+                  const res = origSubmit.apply(this, arguments);
+                  setTimeout(() => { try { window.__guided_v2_in_submit = false; } catch (e) {} }, 2000);
+                  return res;
+                } catch (e) {
+                  try { window.__guided_v2_in_submit = false; } catch (ee) {}
+                  throw e;
+                }
+              });
             } catch (e) {}
-            try {
-              const res = origSubmit.apply(this, arguments);
-              setTimeout(() => { try { window.__guided_v2_in_submit = false; } catch (e) {} }, 2000);
-              return res;
-            } catch (e) {
-              try { window.__guided_v2_in_submit = false; } catch (e) {}
-              throw e;
-            }
           };
 
           if (origRequestSubmit) {
             proto.requestSubmit = function (submitter) {
               try {
-                try { window.__guided_v2_in_submit = true; } catch (e) {}
-                finalSync(this);
+                finalSync(this, () => {
+                  try { window.__guided_v2_in_submit = true; } catch (e) {}
+                  try {
+                    const res = origRequestSubmit.apply(this, arguments);
+                    setTimeout(() => { try { window.__guided_v2_in_submit = false; } catch (e) {} }, 2000);
+                    return res;
+                  } catch (e) {
+                    try { window.__guided_v2_in_submit = false; } catch (ee) {}
+                    throw e;
+                  }
+                });
               } catch (e) {}
-              try {
-                const res = origRequestSubmit.apply(this, arguments);
-                setTimeout(() => { try { window.__guided_v2_in_submit = false; } catch (e) {} }, 2000);
-                return res;
-              } catch (e) {
-                try { window.__guided_v2_in_submit = false; } catch (ee) {}
-                throw e;
-              }
             };
           }
 
@@ -534,9 +731,9 @@
           let trgH = document.getElementById('trigger_rules_json'); if (!trgH) trgH = ensureHidden(form, 'trigger_rules_json');
               try {
                 // use stamped writes so we can trace who last changed the inputs
-                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer2) || []), 'capture-submit-dom');
-                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer2) || []), 'capture-submit-dom');
-                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer2) || []), 'capture-submit-dom');
+                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer2)), 'capture-submit-dom');
+                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer2)), 'capture-submit-dom');
+                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer2)), 'capture-submit-dom');
               } catch (e) {
                 // best-effort: fall back to state if available
                 try { if (window.GuidedBuilderV2State && window.GuidedBuilderV2State.raw) { syncHiddenFromState(form, window.GuidedBuilderV2State.raw()); } } catch (e2) {}
@@ -606,9 +803,9 @@
               if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
               // fallback DOM serialization (stamped)
               try {
-                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(document.getElementById('context-rules')) || []), 'submit-btn-fallback');
-                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(document.getElementById('signal-rules')) || []), 'submit-btn-fallback');
-                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(document.getElementById('trigger-rules')) || []), 'submit-btn-fallback');
+                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(canonicalSerialize(document.getElementById('context-rules'))), 'submit-btn-fallback');
+                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(canonicalSerialize(document.getElementById('signal-rules'))), 'submit-btn-fallback');
+                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(canonicalSerialize(document.getElementById('trigger-rules'))), 'submit-btn-fallback');
               } catch (e) { /* best-effort */ }
             } catch (e) { console.error('ensureHiddenPopulated failed', e); }
           };
@@ -620,40 +817,55 @@
               const sigC = document.getElementById('signal-rules');
               const trgC = document.getElementById('trigger-rules');
               const url = (window.__guided_v2_debug_beacon_url || (form.action || window.location.href));
-              let beaconOk = false;
-              if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-                try {
-                  const fd = new FormData();
-                  const draftEl = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
-                  const did = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
-                  fd.append('draft_id', did);
-                  fd.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxC) || []));
-                  fd.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigC) || []));
-                  fd.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgC) || []));
-                  beaconOk = !!navigator.sendBeacon(url, fd);
-                  try { console.log('[guided-debug] sendBeacon(ensure) ->', beaconOk, url); } catch (e) {}
-                } catch (be) { try { console.log('[guided-debug] sendBeacon(ensure) failed', be && be.message); } catch (e) {} }
-              }
-              if (!beaconOk) {
-                try {
-                  const params = new URLSearchParams();
-                  const draftEl2 = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
-                  const did2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
-                  params.append('draft_id', did2);
-                  params.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxC) || []));
-                  params.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigC) || []));
-                  params.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgC) || []));
-                  try { console.log('[guided-debug] ensure-syncXHR ->', url); } catch (e) {}
-                  const xhr = new XMLHttpRequest(); xhr.open('POST', url, false); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8'); xhr.send(params.toString());
-                  try { console.log('[guided-debug] ensure-syncXHR status ->', xhr.status); } catch (e) {}
-                } catch (sx) { try { console.log('[guided-debug] ensure-syncXHR failed', sx && sx.message); } catch (e) {} }
-              }
+              // Wait for next frames and flush state so DOM/state have settled
+              try {
+                afterNextFrame(function () {
+                  // One more microtask tick after rAF to allow any microtask DOM updates
+                  Promise.resolve().then(function () {
+                    try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); } } catch (e) {}
+                    try {
+                      let beaconOk = false;
+                      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+                        try {
+                          const fd = new FormData();
+                          const draftEl = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
+                          const did = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
+                          fd.append('draft_id', did);
+                          fd.append('context_rules_json', JSON.stringify(canonicalSerialize(ctxC)));
+                          fd.append('signal_rules_json', JSON.stringify(canonicalSerialize(sigC)));
+                          fd.append('trigger_rules_json', JSON.stringify(canonicalSerialize(trgC)));
+                          beaconOk = !!navigator.sendBeacon(url, fd);
+                          try { console.log('[guided-debug] sendBeacon(ensure) ->', beaconOk, url); } catch (e) {}
+                        } catch (be) { try { console.log('[guided-debug] sendBeacon(ensure) failed', be && be.message); } catch (e) {} }
+                      }
+                      if (!beaconOk) {
+                        try {
+                          const params = new URLSearchParams();
+                          const draftEl2 = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
+                          const did2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
+                          params.append('draft_id', did2);
+                          params.append('context_rules_json', JSON.stringify(canonicalSerialize(ctxC)));
+                          params.append('signal_rules_json', JSON.stringify(canonicalSerialize(sigC)));
+                          params.append('trigger_rules_json', JSON.stringify(canonicalSerialize(trgC)));
+                          try { console.log('[guided-debug] ensure-syncXHR ->', url); } catch (e) {}
+                          const xhr = new XMLHttpRequest(); xhr.open('POST', url, false); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8'); xhr.send(params.toString());
+                          try { console.log('[guided-debug] ensure-syncXHR status ->', xhr.status); } catch (e) {}
+                        } catch (sx) { try { console.log('[guided-debug] ensure-syncXHR failed', sx && sx.message); } catch (e) {} }
+                      }
+                    } catch (eee) { try { console.log('[guided-debug] tryBeaconFromEnsure error', eee && eee.message); } catch (e) {} }
+                  }).catch(function (err) { try { console.log('[guided-debug] tryBeaconFromEnsure microtask error', err && err.message); } catch (e) {} });
+                });
+              } catch (e) { try { console.log('[guided-debug] tryBeaconFromEnsure scheduling error', e && e.message); } catch (e2) {} }
             } catch (eee) { try { console.log('[guided-debug] tryBeaconFromEnsure error', eee && eee.message); } catch (e) {} }
           };
 
           // Wire pointer/touch/click to populate as early as possible
-          submitBtn.addEventListener('pointerdown', (ev) => { try { ensureHiddenPopulated(); try { window.__guided_v2_in_submit = true; } catch (e) {} try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} });
-          submitBtn.addEventListener('touchstart', (ev) => { try { ensureHiddenPopulated(); try { window.__guided_v2_in_submit = true; } catch (e) {} try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} }, { passive: true });
+          // On pointer/touch start, populate hidden inputs and attempt an early
+          // beacon, but do NOT mark `__guided_v2_in_submit` yet — that flag is
+          // authoritative for blocking non-final writers and must be set only
+          // once final write is imminent.
+          submitBtn.addEventListener('pointerdown', (ev) => { try { ensureHiddenPopulated(); try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} });
+          submitBtn.addEventListener('touchstart', (ev) => { try { ensureHiddenPopulated(); try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} }, { passive: true });
           submitBtn.addEventListener('click', (ev) => {
             // prevent duplicate handling if another handler already started submission
             if (form.dataset.guidedV2Submitting) return;
@@ -661,11 +873,12 @@
             ev.preventDefault();
             try {
               // populate hidden inputs (try fast path first) and mark submit-in-progress
-              try { ensureHiddenPopulated(); try { window.__guided_v2_in_submit = true; } catch (e) {} try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) { /* ignore */ }
+              try { ensureHiddenPopulated(); try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) { /* ignore */ }
             } catch (e) { console.error('submit-button click sync failed', e); }
             try { console.log('[guided-debug] submit-button click -> hidden', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
-            // proceed with normal submit; ensure the flag is cleared shortly after
-            try { performSubmitWithEvents(form); } catch (e) { console.error('form.submit failed', e); }
+            // proceed with submit via prototype.submit so the overridden
+            // submit (which runs finalSync) executes before native submit
+            try { HTMLFormElement.prototype.submit.call(form); } catch (e) { console.error('form.submit failed', e); }
             setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
           });
           submitBtn.dataset.guidedV2ClickWired = '1';
@@ -695,9 +908,9 @@
               const ctxH = document.getElementById('context_rules_json');
               const sigH = document.getElementById('signal_rules_json');
               const trgH = document.getElementById('trigger_rules_json');
-              if (ctxH) ctxH.value = JSON.stringify(serializeRulesFromDOM(ctxContainer2) || []);
-              if (sigH) sigH.value = JSON.stringify(serializeRulesFromDOM(sigContainer2) || []);
-              if (trgH) trgH.value = JSON.stringify(serializeRulesFromDOM(trgContainer2) || []);
+              if (ctxH) ctxH.value = JSON.stringify(canonicalSerialize(ctxContainer2));
+              if (sigH) sigH.value = JSON.stringify(canonicalSerialize(sigContainer2));
+              if (trgH) trgH.value = JSON.stringify(canonicalSerialize(trgContainer2));
             } catch (e) {}
             try { console.log('[guided-debug] capture-submit -> hidden', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
             // perform native submit (bypass other submit handlers)
@@ -746,6 +959,15 @@
             renderRulesInto(trgContainer, s.trigger_rules || [], 'trigger');
           }
           syncHiddenFromState(form, s);
+          // If a submit button click has started (pending submit), ensure the
+          // authoritative final-pre-submit writes happen immediately so the
+          // server receives the latest DOM state rather than an earlier stale
+          // value.
+          try {
+            if (form && form.dataset && form.dataset.guidedV2Submitting) {
+              try { window.__guided_v2_invoke_final_pre_write && window.__guided_v2_invoke_final_pre_write(form); } catch (e) {}
+            }
+          } catch (e) {}
         } catch (e) { console.error('state subscribe render error', e); }
       });
     }
@@ -796,12 +1018,12 @@
             commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger');
             if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
             try {
-              const ctxH = document.getElementById('context_rules_json'); if (ctxH) ctxH.value = JSON.stringify(serializeRulesFromDOM(document.getElementById('context-rules')) || []);
-              const sigH = document.getElementById('signal_rules_json'); if (sigH) sigH.value = JSON.stringify(serializeRulesFromDOM(document.getElementById('signal-rules')) || []);
-              const trgH = document.getElementById('trigger_rules_json'); if (trgH) trgH.value = JSON.stringify(serializeRulesFromDOM(document.getElementById('trigger-rules')) || []);
+              const ctxH = document.getElementById('context_rules_json'); if (ctxH) ctxH.value = JSON.stringify(canonicalSerialize(document.getElementById('context-rules')));
+              const sigH = document.getElementById('signal_rules_json'); if (sigH) sigH.value = JSON.stringify(canonicalSerialize(document.getElementById('signal-rules')));
+              const trgH = document.getElementById('trigger_rules_json'); if (trgH) trgH.value = JSON.stringify(canonicalSerialize(document.getElementById('trigger-rules')));
             } catch (e) { /* best-effort */ }
           } catch (e) { console.error('submit-button click sync failed', e); }
-          try { performSubmitWithEvents(form); } catch (e) { console.error('form.submit failed', e); }
+          try { HTMLFormElement.prototype.submit.call(form); } catch (e) { console.error('form.submit failed', e); }
           setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
         });
         submitBtn2.dataset.guidedV2ClickWired = '1';

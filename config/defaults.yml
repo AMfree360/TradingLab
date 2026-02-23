@@ -37,3 +37,16 @@ validation:
     min_training_period: "1 year"
 
 
+# GUI debug defaults (local development only). These can be overridden
+# via the environment variables `GUIDED_V2_DEBUG` and
+# `GUIDED_V2_DEBUG_LOG_DIR`.
+gui_debug:
+  enabled: false
+  # Directory where server will persist debug beacon payloads and related
+  # client/server debug artifacts when enabled. Path is relative to repo
+  # root unless absolute.
+  log_dir: "tmp/guided_capture"
+  # If True, server will persist raw /debug/beacon payloads to files.
+  persist_beacon: false
+
+

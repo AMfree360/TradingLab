@@ -27,7 +27,39 @@ class CSVDataLoader:
             DataFrame with datetime index and OHLCV columns
         """
         file_path = Path(file_path)
-        
+        # Quick binary/non-text detection: read a small chunk and ensure it's likely text.
+        try:
+            with open(file_path, 'rb') as bf:
+                sample = bf.read(4096)
+            if sample:
+                if b'\x00' in sample:
+                    snippet = sample[:64]
+                    logger.error(
+                        "File appears to be binary (contains NUL bytes): %s. First bytes: %s",
+                        file_path,
+                        snippet,
+                    )
+                    raise ValueError(
+                        f"Data file does not appear to be a text CSV (contains NUL bytes). First bytes: {snippet!r}"
+                    )
+                printable = sum(1 for b in sample if (32 <= b <= 126) or b in (9, 10, 13))
+                non_printable_ratio = 1.0 - (printable / max(len(sample), 1))
+                if non_printable_ratio > 0.3:
+                    snippet = sample[:64]
+                    logger.error(
+                        "File appears to be non-text/binary (non-printable ratio %.2f): %s. First bytes: %s",
+                        non_printable_ratio,
+                        file_path,
+                        snippet,
+                    )
+                    raise ValueError(
+                        f"Data file does not appear to be a text CSV (high non-printable byte ratio {non_printable_ratio:.2f}). First bytes: {snippet!r}"
+                    )
+        except ValueError:
+            raise
+        except Exception:
+            logger.debug(f"Binary/text detection failed for {file_path}, proceeding with normal CSV load")
+
         # Determine file type and load accordingly
         if file_path.suffix.lower() == '.parquet':
             # Load Parquet file
@@ -72,22 +104,56 @@ class CSVDataLoader:
             # Try to detect separator - common formats use comma, tab, or semicolon
             # Read first line to detect separator
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    first_line = f.readline()
-                    # Check for tab separator (common in forex data)
-                    if '\t' in first_line:
-                        sep = '\t'
-                    elif ';' in first_line:
-                        sep = ';'
-                    else:
-                        sep = ','  # Default to comma
-            except:
-                sep = ','  # Fallback to comma
+                enc = kwargs.pop('encoding', None) or 'utf-8'
+                try:
+                    with open(file_path, 'r', encoding=enc, errors='strict') as f:
+                        first_line = f.readline()
+                except UnicodeDecodeError:
+                    logger.warning(f"Falling back to latin-1 while detecting separator for {file_path}")
+                    enc = 'latin-1'
+                    with open(file_path, 'r', encoding=enc, errors='replace') as f:
+                        first_line = f.readline()
+                except Exception:
+                    first_line = ''
+
+                # Check for tab separator (common in forex data)
+                if '\t' in first_line:
+                    sep = '\t'
+                elif ';' in first_line:
+                    sep = ';'
+                else:
+                    sep = ','  # Default to comma
             
             # Use detected separator, but allow override via kwargs
             if 'sep' not in kwargs and 'delimiter' not in kwargs:
                 kwargs['sep'] = sep
-            df = pd.read_csv(file_path, **kwargs)
+
+            # Ensure pandas uses negotiated encoding; open file handle to control errors behavior
+            try:
+                kwargs_for_pd = dict(kwargs)
+                if 'encoding' in kwargs_for_pd:
+                    # use provided encoding
+                    enc_to_use = kwargs_for_pd.pop('encoding')
+                else:
+                    enc_to_use = enc
+                with open(file_path, 'r', encoding=enc_to_use, errors='strict') as fh:
+                    df = pd.read_csv(fh, **kwargs_for_pd)
+            except UnicodeDecodeError:
+                logger.warning(f"pandas.read_csv failed with utf-8 for {file_path}; retrying with latin-1 (replace)")
+                kwargs_for_pd = dict(kwargs)
+                kwargs_for_pd.pop('encoding', None)
+                with open(file_path, 'r', encoding='latin-1', errors='replace') as fh:
+                    df = pd.read_csv(fh, **kwargs_for_pd)
+            except pd.errors.ParserError as pe:
+                logger.warning(f"pandas.ParserError for {file_path}: {pe}; retrying with python engine and skipping bad lines")
+                try:
+                    # Retry using python engine and skip malformed lines
+                    kwargs_retry = dict(kwargs)
+                    kwargs_retry.pop('encoding', None)
+                    df = pd.read_csv(file_path, engine='python', on_bad_lines='skip', encoding=enc, **kwargs_retry)
+                except Exception:
+                    logger.exception("Retry after ParserError failed for %s", file_path)
+                    raise
         
         # Debug: Log initial state
         logger.debug(f"Loaded DataFrame shape: {df.shape}")

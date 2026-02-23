@@ -9,7 +9,7 @@ async function runTest() {
   const jsPath = 'gui_launcher/static/js/guided_builder_v2.js';
   const modelJs = read('gui_launcher/static/js/guided_builder_v2_model.js');
   const stateJs = read('gui_launcher/static/js/guided_builder_v2_state.js');
-  const domJs = read('gui_launcher/static/js/guided_builder_v2_dom.js');
+  const domJs = read('gui_launcher/static/js/archived_builder_duplicates/guided_builder_v2_dom.js');
   const html = read(htmlPath);
 
   // Remove external script tag to avoid jsdom attempting to fetch it

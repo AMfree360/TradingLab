@@ -4,14 +4,31 @@
    - Keeps volume features behind FEATURE_FLAG.volume (not rendered)
 */
 (function () {
-  const FEATURE_FLAG = { volume: false };
+  const FEATURE_FLAG = { volume: true };
+  try { console.log('[guided-debug] guided_builder_v2.js loaded (workspace edition)'); } catch (e) {}
+
+  // Global ensure-submit helper: synchronous DOM/state -> hidden sync.
+  try {
+    window.__guided_v2_ensure_submit = function (form) {
+      try {
+        if (!form) return true;
+        // flush state then sync hidden from state
+        try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } } catch (e) {}
+        // fallback: sync from DOM containers
+        try { syncHidden(form, document.getElementById('context-rules'), document.getElementById('signal-rules'), document.getElementById('trigger-rules')); } catch (e) {}
+      } catch (e) { /* best-effort */ }
+      return true;
+    };
+  } catch (e) { /* ignore */ }
 
   const contextTypes = [
     ['price_vs_ma', 'Trend: Price vs MA'],
     ['ma_cross_state', 'Trend: MA state (fast vs slow)'],
     ['atr_pct', 'Volatility: ATR% filter'],
+    ['atr_spike', 'Volatility: ATR spike'],
     ['structure_breakout_state', 'Structure: Breakout state'],
     ['ma_spread_pct', 'Trend strength: MA spread %'],
+    ['bollinger_context', 'Bollinger (anchor TF)'],
     ['custom', 'Custom (DSL)']
   ];
 
@@ -57,6 +74,43 @@
       form.appendChild(elHidden);
     }
     return elHidden;
+  }
+
+  // Instrumented write: stamp hidden inputs with source and timestamp for debugging
+  function writeHiddenStamped(form, id, value, source) {
+    try {
+      // If we're in the middle of a final submit, ignore non-final writers
+      try {
+        if (window.__guided_v2_in_submit && (source || '') !== 'final-pre-submit') {
+          try { console.log('[guided-debug] hidden-write SKIP during submit', id, source); } catch (e) {}
+          return;
+        }
+      } catch (ee) {}
+      const elH = ensureHidden(form, id);
+      const stamp = (new Date()).toISOString();
+      elH.value = value;
+      // capture a trimmed stack to help identify the caller path
+      let stack = null;
+      try {
+        const e = new Error();
+        if (e && e.stack) {
+          // split lines and drop the first line which is the Error message
+          const lines = e.stack.split('\n').slice(1).map(l => l.trim());
+          // keep only the top 6 stack frames for brevity
+          stack = lines.slice(0, 6).join(' | ');
+        }
+      } catch (ee) { stack = null; }
+      try { console.log('[guided-debug] hidden-write', stamp, id, source || 'unknown', value, stack ? ('stack=' + stack) : ''); } catch (e) {}
+      try {
+        const rec = { id: id, ts: stamp, source: source || 'unknown', value: value, stack: stack };
+        window.__guided_v2_last_write = rec;
+        try {
+          if (!Array.isArray(window.__guided_v2_write_history)) window.__guided_v2_write_history = [];
+          window.__guided_v2_write_history.push(rec);
+          if (window.__guided_v2_write_history.length > 200) window.__guided_v2_write_history.shift();
+        } catch (ee) {}
+      } catch (e) {}
+    } catch (e) { /* ignore */ }
   }
 
   function parseJsonSafe(txt) {
@@ -157,6 +211,15 @@
     if (section === 'signal' || section === 'trigger') {
       const tf = el('select', { class: 'rule-tf' }); tf.appendChild(el('option', { value: 'default', text: 'default' })); tf.appendChild(el('option', { value: '1m', text: '1m' })); tf.appendChild(el('option', { value: '5m', text: '5m' })); tf.appendChild(el('option', { value: '15m', text: '15m' })); if (rule && rule.tf) tf.value = rule.tf; left.querySelector('.rule-row-top').appendChild(tf);
     }
+    // per-rule side selector (both | long | short) for all sections
+    const sideLabel = el('label', { class: 'rule-side-label', text: 'Side: ' });
+    const sideSel = el('select', { class: 'rule-side' });
+    sideSel.appendChild(el('option', { value: 'both', text: 'both' }));
+    sideSel.appendChild(el('option', { value: 'long', text: 'long' }));
+    sideSel.appendChild(el('option', { value: 'short', text: 'short' }));
+    if (rule && rule.side) sideSel.value = String(rule.side);
+    sideLabel.appendChild(sideSel);
+    left.querySelector('.rule-row-top').appendChild(sideLabel);
 
     const valid = el('input', { type: 'number', class: 'rule-valid', min: 1, placeholder: 'valid_for_bars' });
     if (rule && rule.valid_for_bars) valid.value = String(rule.valid_for_bars);
@@ -208,6 +271,7 @@
       const rule = { type };
       const tfEl = r.querySelector('.rule-tf'); if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = tfEl.value;
       const validEl = r.querySelector('.rule-valid'); if (validEl && validEl.value !== '') { const n = Number(validEl.value); if (Number.isFinite(n)) rule.valid_for_bars = n; }
+      const sideEl = r.querySelector('.rule-side'); if (sideEl && sideEl.value) rule.side = String(sideEl.value).trim().toLowerCase();
       const params = readParamsFromRow(r);
       for (const k of Object.keys(params)) {
         rule[k] = params[k];
@@ -231,19 +295,418 @@
       const ctx = ensureHidden(form, 'context_rules_json');
       const sig = ensureHidden(form, 'signal_rules_json');
       const trg = ensureHidden(form, 'trigger_rules_json');
-      ctx.value = JSON.stringify(state.context_rules || []);
-      sig.value = JSON.stringify(state.signal_rules || []);
-      trg.value = JSON.stringify(state.trigger_rules || []);
+      try {
+        writeHiddenStamped(form, 'context_rules_json', JSON.stringify((state && state.context_rules) ? state.context_rules : []), 'state-sync');
+      } catch (e) { writeHiddenStamped(form, 'context_rules_json', '[]', 'state-sync-fallback'); }
+      try {
+        writeHiddenStamped(form, 'signal_rules_json', JSON.stringify((state && state.signal_rules) ? state.signal_rules : []), 'state-sync');
+      } catch (e) { writeHiddenStamped(form, 'signal_rules_json', '[]', 'state-sync-fallback'); }
+      try {
+        writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify((state && state.trigger_rules) ? state.trigger_rules : []), 'state-sync');
+      } catch (e) { writeHiddenStamped(form, 'trigger_rules_json', '[]', 'state-sync-fallback'); }
     } catch (e) { console.error('syncHiddenFromState', e); }
+  }
+
+  // Fallback DOM -> hidden synchronizer used by the minimal/advanced preview path.
+  function syncHidden(form, ctxContainer, sigContainer, trgContainer) {
+    try {
+      if (!form) return;
+      const ctxH = ensureHidden(form, 'context_rules_json');
+      const sigH = ensureHidden(form, 'signal_rules_json');
+      const trgH = ensureHidden(form, 'trigger_rules_json');
+      try {
+        writeHiddenStamped(form, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []), 'dom-sync');
+      } catch (e) { writeHiddenStamped(form, 'context_rules_json', '[]', 'dom-sync-fallback'); }
+      try {
+        writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []), 'dom-sync');
+      } catch (e) { writeHiddenStamped(form, 'signal_rules_json', '[]', 'dom-sync-fallback'); }
+      try {
+        writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []), 'dom-sync');
+      } catch (e) { writeHiddenStamped(form, 'trigger_rules_json', '[]', 'dom-sync-fallback'); }
+    } catch (e) { /* best-effort */ }
   }
 
   function init() {
     const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
     if (!form) return;
 
+    // Attach inline onsubmit attribute to cover any submit pathway
+    try {
+      const existingOn = form.onsubmit;
+      form.onsubmit = function (ev) {
+        try { window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(form); } catch (e) {}
+        if (typeof existingOn === 'function') return existingOn.call(this, ev);
+        return true;
+      };
+      // also set attribute for non-JS consumers/other hooks
+      try { form.setAttribute('onsubmit', 'return (window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(this))'); } catch (e) {}
+    } catch (e) { /* ignore */ }
+
+    // Ensure programmatic submits also serialize hidden inputs.
+    // Wrap `form.submit` and `form.requestSubmit` (if present) to perform
+    // a synchronous DOM/state -> hidden sync before calling the original.
+    (function bindProgrammaticSubmit(f) {
+      try {
+        if (!f) return;
+        const origSubmit = f.submit && f.submit.bind(f);
+        const origRequestSubmit = f.requestSubmit && f.requestSubmit.bind(f);
+
+        function doSync() {
+          try {
+            // flush state first
+            if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(f, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
+          } catch (e) {}
+          try {
+            const ctx = document.getElementById('context-rules');
+            const sig = document.getElementById('signal-rules');
+            const trg = document.getElementById('trigger-rules');
+            syncHidden(f, ctx, sig, trg);
+          } catch (e) {}
+          try { console.log('[guided-debug]', new Date().toISOString(), 'programmatic-sync ->', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
+        }
+
+        if (origRequestSubmit) {
+          f.requestSubmit = function (submitter) {
+            try { doSync(); } catch (e) {}
+            return origRequestSubmit(submitter);
+          };
+        }
+
+        if (origSubmit) {
+          f.submit = function () {
+            try { doSync(); } catch (e) {}
+            return origSubmit();
+          };
+        }
+      } catch (e) { /* best-effort */ }
+    })(form);
+
+    // Authoritative global submit hook: ensure any call to `form.submit()` or
+    // `form.requestSubmit()` performs a final synchronous serialization of
+    // DOM -> hidden inputs and a state flush before calling the native submit.
+    try {
+      (function installGlobalSubmitHook() {
+        try {
+          const proto = HTMLFormElement && HTMLFormElement.prototype;
+          if (!proto) return;
+          // Avoid installing multiple times
+          if (proto.__guided_v2_submit_hook_installed) return;
+
+          const origSubmit = proto.submit;
+          const origRequestSubmit = proto.requestSubmit;
+
+          function finalSync(f) {
+            try {
+              // best-effort: commit pending DOM sections
+              try { commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger'); } catch (e) {}
+              // flush state manager if present
+              try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); } } catch (e) {}
+              // write authoritative stamped values synchronously
+              try {
+                const ctxContainer = f.querySelector ? f.querySelector('#context-rules') : document.getElementById('context-rules');
+                const sigContainer = f.querySelector ? f.querySelector('#signal-rules') : document.getElementById('signal-rules');
+                const trgContainer = f.querySelector ? f.querySelector('#trigger-rules') : document.getElementById('trigger-rules');
+                // Attempt to send the payload via sendBeacon as a guaranteed-before-unload delivery.
+                try {
+                  let beaconOk = false;
+                  const url = (window.__guided_v2_debug_beacon_url || (f.action || window.location.href));
+                  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+                    try {
+                      const bd = new FormData();
+                      const draftEl = f.querySelector && (f.querySelector('input[name="draft_id"]') || f.querySelector('#draft_id'));
+                      const draftId = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
+                      bd.append('draft_id', draftId);
+                      bd.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []));
+                      bd.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []));
+                      bd.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []));
+                      beaconOk = !!navigator.sendBeacon(url, bd);
+                      try { console.log('[guided-debug] sendBeacon ->', beaconOk, url); } catch (e) {}
+                    } catch (be) { try { console.log('[guided-debug] sendBeacon failed', be && be.message); } catch (e) {} }
+                  }
+                  // If beacon wasn't sent or isn't available, do a synchronous XHR as a last-ditch fallback.
+                  if (!beaconOk) {
+                    try {
+                      const params = new URLSearchParams();
+                      const draftEl2 = f.querySelector && (f.querySelector('input[name="draft_id"]') || f.querySelector('#draft_id'));
+                      const draftId2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
+                      params.append('draft_id', draftId2);
+                      params.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []));
+                      params.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []));
+                      params.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []));
+                      try { console.log('[guided-debug] final-pre-submit syncXHR ->', url, params.toString().slice(0,200)); } catch (e) {}
+                      const xhr = new XMLHttpRequest();
+                      xhr.open('POST', url, false); // synchronous
+                      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+                      xhr.send(params.toString());
+                      try { console.log('[guided-debug] final-pre-submit syncXHR status ->', xhr.status); } catch (e) {}
+                    } catch (sx) { try { console.log('[guided-debug] final-pre-submit syncXHR failed', sx && sx.message); } catch (e) {} }
+                  }
+                } catch (enne) { try { console.log('[guided-debug] final-pre-submit beacon/xhr error', enne && enne.message); } catch (e) {} }
+                writeHiddenStamped(f, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer) || []), 'final-pre-submit');
+                writeHiddenStamped(f, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer) || []), 'final-pre-submit');
+                writeHiddenStamped(f, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer) || []), 'final-pre-submit');
+              } catch (e) {
+                try { syncHiddenFromState(f, window.GuidedBuilderV2State && window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } catch (e2) {}
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          proto.submit = function () {
+            try {
+              try { window.__guided_v2_in_submit = true; } catch (e) {}
+              finalSync(this);
+            } catch (e) {}
+            try {
+              const res = origSubmit.apply(this, arguments);
+              setTimeout(() => { try { window.__guided_v2_in_submit = false; } catch (e) {} }, 2000);
+              return res;
+            } catch (e) {
+              try { window.__guided_v2_in_submit = false; } catch (e) {}
+              throw e;
+            }
+          };
+
+          if (origRequestSubmit) {
+            proto.requestSubmit = function (submitter) {
+              try {
+                try { window.__guided_v2_in_submit = true; } catch (e) {}
+                finalSync(this);
+              } catch (e) {}
+              try {
+                const res = origRequestSubmit.apply(this, arguments);
+                setTimeout(() => { try { window.__guided_v2_in_submit = false; } catch (e) {} }, 2000);
+                return res;
+              } catch (e) {
+                try { window.__guided_v2_in_submit = false; } catch (ee) {}
+                throw e;
+              }
+            };
+          }
+
+          proto.__guided_v2_submit_hook_installed = true;
+        } catch (e) { /* best-effort */ }
+      })();
+    } catch (e) { /* ignore */ }
+
+    // Watch for forms being replaced dynamically and rebind our wrappers
+    try {
+      const mo = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          for (const n of Array.from(m.addedNodes || [])) {
+            try {
+              if (!(n instanceof HTMLElement)) continue;
+              const newForm = n.querySelector && n.querySelector('form[action="/create-strategy-guided/step4"]') || (n.id === 'guided_step4_form' ? n : null);
+              if (newForm) {
+                (function bindAgain(f) {
+                  try {
+                    const origSubmit = f.submit && f.submit.bind(f);
+                    const origRequestSubmit = f.requestSubmit && f.requestSubmit.bind(f);
+                    if (!origSubmit && !origRequestSubmit) return;
+                    // reuse same doSync logic
+                    const doSync = function () {
+                      try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(f, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } } catch (e) {}
+                      try { syncHidden(f, document.getElementById('context-rules'), document.getElementById('signal-rules'), document.getElementById('trigger-rules')); } catch (e) {}
+                    };
+                    if (origRequestSubmit) f.requestSubmit = function (submitter) { try { doSync(); } catch (e) {} ; return origRequestSubmit(submitter); };
+                    if (origSubmit) f.submit = function () { try { doSync(); } catch (e) {} ; return origSubmit(); };
+                  } catch (e) {}
+                })(newForm);
+              }
+            } catch (e) {}
+          }
+        }
+      });
+      mo.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    } catch (e) { /* ignore */ }
+
+    // Ensure we always serialize DOM -> hidden inputs before any submit.
+    // Use a capture-phase listener so this runs before other submit handlers
+    // (prevents races where requestSubmit or other handlers cause submission
+    // before hidden inputs are populated).
+    try {
+      form.addEventListener('submit', function (ev) {
+        try {
+          const ctxContainer2 = document.getElementById('context-rules');
+          const sigContainer2 = document.getElementById('signal-rules');
+          const trgContainer2 = document.getElementById('trigger-rules');
+          let ctxH = document.getElementById('context_rules_json'); if (!ctxH) ctxH = ensureHidden(form, 'context_rules_json');
+          let sigH = document.getElementById('signal_rules_json'); if (!sigH) sigH = ensureHidden(form, 'signal_rules_json');
+          let trgH = document.getElementById('trigger_rules_json'); if (!trgH) trgH = ensureHidden(form, 'trigger_rules_json');
+              try {
+                // use stamped writes so we can trace who last changed the inputs
+                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxContainer2) || []), 'capture-submit-dom');
+                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigContainer2) || []), 'capture-submit-dom');
+                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgContainer2) || []), 'capture-submit-dom');
+              } catch (e) {
+                // best-effort: fall back to state if available
+                try { if (window.GuidedBuilderV2State && window.GuidedBuilderV2State.raw) { syncHiddenFromState(form, window.GuidedBuilderV2State.raw()); } } catch (e2) {}
+              }
+        } catch (e) { /* best-effort */ }
+      }, true);
+    } catch (e) { /* ignore */ }
+
+    function performSubmitWithEvents(f) {
+      try {
+        if (typeof f.requestSubmit === 'function') { f.requestSubmit(); return; }
+        const evt = new Event('submit', { bubbles: true, cancelable: true });
+        const notCanceled = f.dispatchEvent(evt);
+        if (notCanceled) {
+          // call native submit
+          HTMLFormElement.prototype.submit.call(f);
+        }
+      } catch (e) {
+        try { HTMLFormElement.prototype.submit.call(f); } catch (e2) { /* ignore */ }
+      }
+    }
+
     // If the advanced guided builder (preview body) is present, prefer its
     // renderer to avoid duplicate/wrong wiring from this legacy module.
-    if (document.getElementById('effective-preview-body')) return;
+    // When the advanced renderer is present we should NOT run the full
+    // legacy wiring (it will cause duplicate renders). However we still
+    // must ensure the form submit handler syncs hidden JSON inputs/draft
+    // id. Attach a minimal submit handler and return early.
+    const advancedPreviewBody = document.getElementById('effective-preview-body');
+    if (advancedPreviewBody) {
+      // ensure hidden inputs exist
+      ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json');
+      // minimal submit sync to preserve draft/hidden JSON when submitting from advanced UI
+      form.addEventListener('submit', () => {
+        try {
+          if (window.GuidedBuilderV2State) {
+            window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush();
+            const s = window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {};
+            syncHiddenFromState(form, s);
+          } else {
+            // fallback: sync directly from DOM containers if present
+            const ctxContainer = document.getElementById('context-rules');
+            const sigContainer = document.getElementById('signal-rules');
+            const trgContainer = document.getElementById('trigger-rules');
+            syncHidden(form, ctxContainer, sigContainer, trgContainer);
+          }
+          // Additionally, always attempt to sync from DOM rule containers
+          // to cover cases where rules exist in the DOM but weren't yet
+          // reflected in the state manager.
+          try {
+            const ctxContainer2 = document.getElementById('context-rules');
+            const sigContainer2 = document.getElementById('signal-rules');
+            const trgContainer2 = document.getElementById('trigger-rules');
+            syncHidden(form, ctxContainer2, sigContainer2, trgContainer2);
+            try { console.log('[guided-debug] minimal submit sync ->', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
+          } catch (e) { /* best-effort */ }
+        } catch (e) { console.error('submit sync (minimal) failed', e); }
+      });
+      // Also intercept the Review button click to force immediate DOM->hidden sync
+      try {
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn && !submitBtn.dataset.guidedV2ClickWired) {
+          // Ensure hidden inputs are populated as early as possible across input types
+          const ensureHiddenPopulated = () => {
+              try {
+              commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger');
+              if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
+              // fallback DOM serialization (stamped)
+              try {
+                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(serializeRulesFromDOM(document.getElementById('context-rules')) || []), 'submit-btn-fallback');
+                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(serializeRulesFromDOM(document.getElementById('signal-rules')) || []), 'submit-btn-fallback');
+                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(serializeRulesFromDOM(document.getElementById('trigger-rules')) || []), 'submit-btn-fallback');
+              } catch (e) { /* best-effort */ }
+            } catch (e) { console.error('ensureHiddenPopulated failed', e); }
+          };
+
+          // Best-effort beacon/xhr to ensure server receives serialized payload
+          const tryBeaconFromEnsure = () => {
+            try {
+              const ctxC = document.getElementById('context-rules');
+              const sigC = document.getElementById('signal-rules');
+              const trgC = document.getElementById('trigger-rules');
+              const url = (window.__guided_v2_debug_beacon_url || (form.action || window.location.href));
+              let beaconOk = false;
+              if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+                try {
+                  const fd = new FormData();
+                  const draftEl = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
+                  const did = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
+                  fd.append('draft_id', did);
+                  fd.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxC) || []));
+                  fd.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigC) || []));
+                  fd.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgC) || []));
+                  beaconOk = !!navigator.sendBeacon(url, fd);
+                  try { console.log('[guided-debug] sendBeacon(ensure) ->', beaconOk, url); } catch (e) {}
+                } catch (be) { try { console.log('[guided-debug] sendBeacon(ensure) failed', be && be.message); } catch (e) {} }
+              }
+              if (!beaconOk) {
+                try {
+                  const params = new URLSearchParams();
+                  const draftEl2 = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
+                  const did2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
+                  params.append('draft_id', did2);
+                  params.append('context_rules_json', JSON.stringify(serializeRulesFromDOM(ctxC) || []));
+                  params.append('signal_rules_json', JSON.stringify(serializeRulesFromDOM(sigC) || []));
+                  params.append('trigger_rules_json', JSON.stringify(serializeRulesFromDOM(trgC) || []));
+                  try { console.log('[guided-debug] ensure-syncXHR ->', url); } catch (e) {}
+                  const xhr = new XMLHttpRequest(); xhr.open('POST', url, false); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8'); xhr.send(params.toString());
+                  try { console.log('[guided-debug] ensure-syncXHR status ->', xhr.status); } catch (e) {}
+                } catch (sx) { try { console.log('[guided-debug] ensure-syncXHR failed', sx && sx.message); } catch (e) {} }
+              }
+            } catch (eee) { try { console.log('[guided-debug] tryBeaconFromEnsure error', eee && eee.message); } catch (e) {} }
+          };
+
+          // Wire pointer/touch/click to populate as early as possible
+          submitBtn.addEventListener('pointerdown', (ev) => { try { ensureHiddenPopulated(); try { window.__guided_v2_in_submit = true; } catch (e) {} try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} });
+          submitBtn.addEventListener('touchstart', (ev) => { try { ensureHiddenPopulated(); try { window.__guided_v2_in_submit = true; } catch (e) {} try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} }, { passive: true });
+          submitBtn.addEventListener('click', (ev) => {
+            // prevent duplicate handling if another handler already started submission
+            if (form.dataset.guidedV2Submitting) return;
+            form.dataset.guidedV2Submitting = '1';
+            ev.preventDefault();
+            try {
+              // populate hidden inputs (try fast path first) and mark submit-in-progress
+              try { ensureHiddenPopulated(); try { window.__guided_v2_in_submit = true; } catch (e) {} try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) { /* ignore */ }
+            } catch (e) { console.error('submit-button click sync failed', e); }
+            try { console.log('[guided-debug] submit-button click -> hidden', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
+            // proceed with normal submit; ensure the flag is cleared shortly after
+            try { performSubmitWithEvents(form); } catch (e) { console.error('form.submit failed', e); }
+            setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
+          });
+          submitBtn.dataset.guidedV2ClickWired = '1';
+        }
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    // Capture-phase submit handler: ensure we serialize DOM -> hidden inputs
+    try {
+      // Robust capture-phase submit: prevent default, populate hidden inputs,
+      // then perform native submit to avoid other handlers overwriting values.
+      form.addEventListener(
+        'submit',
+        function (ev) {
+          try {
+            ev.preventDefault();
+            // populate hidden inputs synchronously
+            try {
+              // prefer state flush
+              if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
+            } catch (e) {}
+            try {
+              const ctxContainer2 = document.getElementById('context-rules');
+              const sigContainer2 = document.getElementById('signal-rules');
+              const trgContainer2 = document.getElementById('trigger-rules');
+              const ctxH = document.getElementById('context_rules_json');
+              const sigH = document.getElementById('signal_rules_json');
+              const trgH = document.getElementById('trigger_rules_json');
+              if (ctxH) ctxH.value = JSON.stringify(serializeRulesFromDOM(ctxContainer2) || []);
+              if (sigH) sigH.value = JSON.stringify(serializeRulesFromDOM(sigContainer2) || []);
+              if (trgH) trgH.value = JSON.stringify(serializeRulesFromDOM(trgContainer2) || []);
+            } catch (e) {}
+            try { console.log('[guided-debug] capture-submit -> hidden', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
+            // perform native submit (bypass other submit handlers)
+            setTimeout(function () { try { HTMLFormElement.prototype.submit.call(form); } catch (e) { try { performSubmitWithEvents(form); } catch (e2) {} } }, 0);
+          } catch (e) { /* best-effort */ }
+        },
+        true
+      );
+    } catch (e) { /* ignore */ }
 
     const ctxContainer = document.getElementById('context-rules');
     const sigContainer = document.getElementById('signal-rules');
@@ -270,9 +733,18 @@
     if (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.subscribe === 'function') {
       window.GuidedBuilderV2State.subscribe((s) => {
         try {
-          renderRulesInto(ctxContainer, s.context_rules || [], 'context');
-          renderRulesInto(sigContainer, s.signal_rules || [], 'signal');
-          renderRulesInto(trgContainer, s.trigger_rules || [], 'trigger');
+          // Avoid re-rendering a section while the user is actively focused
+          // inside that section (prevents focus loss while typing).
+          const active = document.activeElement;
+          if (!(active && ctxContainer && ctxContainer.contains(active))) {
+            renderRulesInto(ctxContainer, s.context_rules || [], 'context');
+          }
+          if (!(active && sigContainer && sigContainer.contains(active))) {
+            renderRulesInto(sigContainer, s.signal_rules || [], 'signal');
+          }
+          if (!(active && trgContainer && trgContainer.contains(active))) {
+            renderRulesInto(trgContainer, s.trigger_rules || [], 'trigger');
+          }
           syncHiddenFromState(form, s);
         } catch (e) { console.error('state subscribe render error', e); }
       });
@@ -301,11 +773,40 @@
       container.addEventListener('input', () => commitSectionFromDOM(section));
       container.addEventListener('change', () => commitSectionFromDOM(section));
       container.addEventListener('click', (ev) => { if (ev.target && ev.target.classList && ev.target.classList.contains('rule-remove')) commitSectionFromDOM(section); });
+      // On focusout (blur from any element within the container), ensure
+      // the latest edits are committed to the state immediately so a
+      // subsequent re-render doesn't overwrite them.
+      container.addEventListener('focusout', (ev) => {
+        try { commitSectionFromDOM(section); } catch (e) { console.error('focusout commit failed', e); }
+      });
     };
     delegateEvents(ctxContainer, 'context'); delegateEvents(sigContainer, 'signal'); delegateEvents(trgContainer, 'trigger');
 
     // ensure hidden sync on submit
     form.addEventListener('submit', () => { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); const s = window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}; syncHiddenFromState(form, s); } else { syncHidden(form, ctxContainer, sigContainer, trgContainer); } });
+    // Also ensure the submit button click forces an immediate sync (best-effort)
+    try {
+      const submitBtn2 = form.querySelector('button[type="submit"]');
+      if (submitBtn2 && !submitBtn2.dataset.guidedV2ClickWired) {
+        submitBtn2.addEventListener('click', (ev) => {
+          if (form.dataset.guidedV2Submitting) return;
+          form.dataset.guidedV2Submitting = '1';
+          ev.preventDefault();
+          try {
+            commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger');
+            if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
+            try {
+              const ctxH = document.getElementById('context_rules_json'); if (ctxH) ctxH.value = JSON.stringify(serializeRulesFromDOM(document.getElementById('context-rules')) || []);
+              const sigH = document.getElementById('signal_rules_json'); if (sigH) sigH.value = JSON.stringify(serializeRulesFromDOM(document.getElementById('signal-rules')) || []);
+              const trgH = document.getElementById('trigger_rules_json'); if (trgH) trgH.value = JSON.stringify(serializeRulesFromDOM(document.getElementById('trigger-rules')) || []);
+            } catch (e) { /* best-effort */ }
+          } catch (e) { console.error('submit-button click sync failed', e); }
+          try { performSubmitWithEvents(form); } catch (e) { console.error('form.submit failed', e); }
+          setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
+        });
+        submitBtn2.dataset.guidedV2ClickWired = '1';
+      }
+    } catch (e) { /* ignore */ }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
@@ -390,6 +891,8 @@
         const n = Number(validEl.value);
         if (Number.isFinite(n)) rule.valid_for_bars = n;
       }
+      const sideEl = r.querySelector('.rule-side');
+      if (sideEl && sideEl.value) rule.side = String(sideEl.value).trim().toLowerCase();
       const customEl = r.querySelector('.rule-custom');
       if (customEl && customEl.value && customEl.value.trim() !== '') rule.custom = customEl.value.trim();
       out.push(rule);
@@ -433,6 +936,14 @@
       if (rule && rule.tf) tf.value = rule.tf;
       left.appendChild(tf);
     }
+
+    // side selector for all sections
+    const sideSel = el('select', { class: 'rule-side', name: 'side' });
+    sideSel.appendChild(el('option', { value: 'both', text: 'both' }));
+    sideSel.appendChild(el('option', { value: 'long', text: 'long' }));
+    sideSel.appendChild(el('option', { value: 'short', text: 'short' }));
+    if (rule && rule.side) sideSel.value = String(rule.side);
+    left.appendChild(sideSel);
 
     // valid_for_bars
     const valid = el('input', { type: 'number', class: 'rule-valid', name: 'valid_for_bars', min: 1, value: (rule && rule.valid_for_bars) ? String(rule.valid_for_bars) : '' });
@@ -480,7 +991,8 @@
 
     // If the advanced guided builder (preview body) is present, prefer its
     // renderer to avoid duplicate/wrong wiring from this legacy module.
-    if (document.getElementById('effective-preview-body')) return;
+    // NOTE: do not early-return here — we still need to wire form submit
+    // handlers to ensure hidden JSON inputs and `draft_id` are synced.
 
     const ctxContainer = document.getElementById('context-rules');
     const sigContainer = document.getElementById('signal-rules');
@@ -527,6 +1039,22 @@
 
     // on submit, make sure hidden inputs reflect current state
     form.addEventListener('submit', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
+
+    // ensure hidden JSONs are synced as early as possible when user presses Review
+    try {
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn && !submitBtn.dataset.guidedV2Mousedown) {
+        submitBtn.addEventListener('mousedown', (ev) => {
+          try {
+            // force serialize current DOM rows into hidden inputs
+            syncHidden(form, ctxContainer, sigContainer, trgContainer);
+            // also log for debugging
+            try { console.log('[guided-debug] mousedown syncHidden ->', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
+          } catch (e) { /* best-effort */ }
+        });
+        submitBtn.dataset.guidedV2Mousedown = '1';
+      }
+    } catch (e) { /* ignore */ }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
@@ -639,6 +1167,35 @@
       const trgContainer = document.getElementById('trigger-rules');
       const primaryContextSel = document.getElementById('primary_context_type');
       const maStackBlock = document.getElementById('context_ma_stack_block');
+
+      // Ensure the main primary context dropdown includes all per-row context block options.
+      // This keeps the global primary selector in sync with available context blocks (including volume blocks).
+      (function populatePrimaryContextOptions() {
+        if (!primaryContextSel) return;
+        const opts = [
+          ['none', 'None'],
+          ['ma_stack', 'MA Stack'],
+          ['price_vs_ma', 'Trend: Price vs MA'],
+          ['ma_cross_state', 'Trend: MA state (fast vs slow)'],
+          ['atr_pct', 'Volatility: ATR% filter'],
+          ['atr_spike', 'Volatility: ATR spike'],
+          ['structure_breakout_state', 'Structure: Breakout state'],
+          ['ma_spread_pct', 'Trend strength: MA spread %'],
+          ['bollinger_context', 'Bollinger (anchor TF)'],
+          ['relative_volume', 'Relative Volume (RVOL)'],
+          ['volume_osc_increase', 'Volume Oscillator Increase'],
+          ['volume_above_ma', 'Volume Above MA'],
+          ['custom', 'Custom (DSL)']
+        ];
+        // Preserve current value if present
+        const cur = String(primaryContextSel.value || '').trim();
+        primaryContextSel.innerHTML = '';
+        for (const [v, label] of opts) {
+          const o = document.createElement('option'); o.value = v; o.textContent = label; primaryContextSel.appendChild(o);
+        }
+        if (cur) primaryContextSel.value = cur;
+        else primaryContextSel.value = 'none';
+      })();
 
       function val(name) {
         const el = form.querySelector(`[name="${name}"]`);
@@ -887,6 +1444,18 @@
             select(b, 'Operator', 'op', [['>', '>'], ['<', '<'], ['>=', '>='], ['<=', '<=']], rule?.op || '>');
             inputNumber(b, 'Threshold (fraction)', 'threshold', rule?.threshold ?? 0.005, { step: 0.0001, min: 0 });
           });
+          block('atr_spike', (b) => {
+            inputNumber(b, 'ATR length', 'atr_len', rule?.atr_len ?? 14, { min: 1 });
+            inputNumber(b, 'Lookback / rolling ATR lag', 'lookback', rule?.lookback ?? 1, { min: 1 });
+            inputNumber(b, 'Multiplier', 'mult', rule?.mult ?? 1.3, { step: 0.01, min: 0 });
+            b.appendChild(el('div', { class: 'muted', text: 'ATR Spike: true when current ATR > multiplier × rolling-average ATR.' }));
+          });
+          block('bollinger_context', (b) => {
+            inputNumber(b, 'Period', 'length', rule?.length ?? 20, { min: 1 });
+            inputNumber(b, 'Std dev (×mult)', 'mult', rule?.mult ?? 2.5, { step: 0.1, min: 0 });
+            select(b, 'Mode', 'mode', [['inside', 'Inside band'], ['outside', 'Outside band'], ['near', 'Near band']], rule?.mode || 'inside');
+            b.appendChild(el('div', { class: 'muted', text: 'Bollinger Context: require anchor TF price membership relative to Bollinger bands.' }));
+          });
           block('structure_breakout_state', (b) => {
             inputNumber(b, 'Lookback length', 'length', rule?.length ?? 20, { min: 1 });
           });
@@ -934,6 +1503,37 @@
             select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], rule?.ma_type || 'ema');
             inputNumber(b, 'MA length', 'length', rule?.length ?? 20, { min: 1 });
           });
+          block('z_score', (b) => {
+            inputNumber(b, 'Length (mean & std)', 'length', rule?.length ?? 20, { min: 1 });
+            select(b, 'Operator', 'op', [['>', '>'], ['<', '<'], ['>=', '>='], ['<=', '<=']], rule?.op || '>');
+            inputNumber(b, 'Threshold (abs)', 'threshold', rule?.threshold ?? 2.0, { step: 0.1, min: 0 });
+            b.appendChild(el('div', { class: 'muted', text: 'Z-score = (close - mean)/std. Use next_open to avoid same-bar lookahead.' }));
+          });
+          block('bollinger_outlier', (b) => {
+            inputNumber(b, 'Period', 'length', rule?.length ?? 20, { min: 1 });
+            inputNumber(b, 'Std dev (×mult)', 'mult', rule?.mult ?? 2.5, { step: 0.1, min: 0 });
+            select(b, 'Direction', 'direction', [['either', 'Either'], ['below', 'Below only'], ['above', 'Above only']], rule?.direction || 'either');
+            inputCheckbox(b, 'Require close outside band', 'require_close_outside', rule?.require_close_outside);
+            b.appendChild(el('div', { class: 'muted', text: 'Detects price closing outside Bollinger bands.' }));
+          });
+          block('atr_deviation', (b) => {
+            inputNumber(b, 'Mean length', 'length', rule?.length ?? 20, { min: 1 });
+            inputNumber(b, 'ATR length', 'atr_len', rule?.atr_len ?? 14, { min: 1 });
+            inputNumber(b, 'Deviation k (×ATR)', 'threshold', rule?.threshold ?? 2.5, { step: 0.1, min: 0 });
+            inputCheckbox(b, 'Use range-based ATR', 'use_range', (rule && rule.use_range) ? rule.use_range : true);
+            b.appendChild(el('div', { class: 'muted', text: 'Price distance from MA or mean expressed in ATR multiples.' }));
+          });
+          block('delta_divergence', (b) => {
+            inputNumber(b, 'Lookback bars', 'lookback', rule?.lookback ?? 5, { min: 1 });
+            inputNumber(b, 'Threshold', 'threshold', rule?.threshold ?? 0.0, { step: 0.01, min: 0 });
+            b.appendChild(el('div', { class: 'muted', text: 'Futures-only: price extreme without supporting delta move (absorption/divergence).' }));
+          });
+          block('volume_rejection', (b) => {
+            inputNumber(b, 'Volume MA length', 'vol_len', rule?.vol_len ?? 20, { min: 1 });
+            inputNumber(b, 'Multiplier', 'mult', rule?.mult ?? 1.5, { step: 0.1, min: 0 });
+            inputNumber(b, 'Close-in-range pct', 'close_pct', rule?.close_pct ?? 0.3, { step: 0.01, min: 0, max: 1 });
+            b.appendChild(el('div', { class: 'muted', text: 'Volume spike + rejection candle: high-volume extreme followed by a rejection close.' }));
+          });
           block('custom', (b) => {
             b.appendChild(el('div', { class: 'muted', text: 'Bull/bear expressions. If you omit @tf, the builder will apply the Entry TF automatically.' }));
             inputTextArea(b, 'Bull expr', 'bull_expr', rule?.bull_expr || '', 'e.g. rsi(close, 14) < 30');
@@ -962,6 +1562,12 @@
             inputNumber(b, 'ATR length', 'atr_len', rule?.atr_len ?? 14, { min: 1 });
             inputNumber(b, 'Multiplier', 'mult', rule?.mult ?? 2.0, { step: 0.1, min: 0.1 });
           });
+          block('volume_rejection', (b) => {
+            inputNumber(b, 'Volume MA length', 'vol_ma_len', rule?.vol_ma_len ?? 20, { min: 1 });
+            inputNumber(b, 'Multiplier', 'multiplier', rule?.multiplier ?? 1.5, { step: 0.1, min: 0 });
+            inputNumber(b, 'Close-in-range pct', 'close_pct', rule?.close_pct ?? 0.3, { step: 0.01, min: 0, max: 1 });
+            b.appendChild(el('div', { class: 'muted', text: 'Trigger when extreme + volume spike + rejection-close occurs.' }));
+          });
           block('custom', (b) => {
             b.appendChild(el('div', { class: 'muted', text: 'Bull/bear expressions. If you omit @tf, the builder will apply the Entry TF automatically.' }));
             inputTextArea(b, 'Bull expr', 'bull_expr', rule?.bull_expr || '', 'e.g. close > shift(high, 1)');
@@ -987,28 +1593,36 @@
           addOpt('price_vs_ma', 'Trend: Price vs MA');
           addOpt('ma_cross_state', 'Trend: MA state (fast vs slow)');
           addOpt('atr_pct', 'Volatility: ATR% filter');
+          addOpt('atr_spike', 'Volatility: ATR spike');
           addOpt('structure_breakout_state', 'Structure: Breakout state (close vs prior high/low)');
           addOpt('ma_spread_pct', 'Trend strength: MA spread %');
-          // addOpt('relative_volume', 'Relative Volume (RVOL)');
-          // addOpt('volume_osc_increase', 'Volume Oscillator Increase');
-          // addOpt('volume_above_ma', 'Volume Above MA');
+          addOpt('bollinger_context', 'Bollinger (anchor TF)');
+          addOpt('relative_volume', 'Relative Volume (RVOL)');
+          addOpt('volume_osc_increase', 'Volume Oscillator Increase');
+          addOpt('volume_above_ma', 'Volume Above MA');
           addOpt('custom', 'Custom (DSL)');
         } else if (section === 'signal') {
           addOpt('ma_cross', 'MA cross (fast vs slow)');
           addOpt('rsi_threshold', 'RSI threshold');
           addOpt('rsi_cross_back', 'RSI cross back');
           addOpt('donchian_breakout', 'Donchian breakout/breakdown');
+          addOpt('z_score', 'Z-score (statistical)');
+          addOpt('bollinger_outlier', 'Bollinger outlier');
+          addOpt('atr_deviation', 'ATR deviation');
+          addOpt('delta_divergence', 'Delta divergence (futures)');
           addOpt('new_high_low_breakout', 'New high/low breakout');
           addOpt('pullback_to_ma', 'Pullback to MA');
-          // addOpt('relative_volume', 'Relative Volume (RVOL)');
-          // addOpt('volume_osc_increase', 'Volume Oscillator Increase');
-          // addOpt('volume_above_ma', 'Volume Above MA');
+          addOpt('relative_volume', 'Relative Volume (RVOL)');
+          addOpt('volume_osc_increase', 'Volume Oscillator Increase');
+          addOpt('volume_above_ma', 'Volume Above MA');
+          addOpt('volume_rejection', 'Volume rejection (spike+reject)');
           addOpt('custom', 'Custom (DSL)');
         } else {
           addOpt('pin_bar', 'Pin bar');
           addOpt('inside_bar_breakout', 'Inside bar breakout');
           addOpt('engulfing', 'Engulfing');
           addOpt('ma_reclaim', 'MA reclaim');
+          addOpt('volume_rejection', 'Volume rejection (spike+reject)');
           addOpt('prior_bar_break', 'Break prior bar high/low');
           addOpt('donchian_breakout', 'Donchian breakout/breakdown');
           addOpt('range_breakout', 'Range breakout (highest/lowest)');
@@ -1017,28 +1631,28 @@
         }
 
         // Volume rule blocks (Context & Signal)
-        // if (section === 'context' || section === 'signal') {
-        //   block('relative_volume', (b) => {
-        //     select(b, 'MA type', 'ma_type', [['sma', 'SMA'], ['ema', 'EMA']], (rule && rule.ma_type != null) ? rule.ma_type : 'sma');
-        //     inputNumber(b, 'MA length', 'length', (rule && rule.length != null) ? rule.length : 20, { min: 1 });
-        //     select(b, 'Operator', 'op', [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<']], (rule && rule.op != null) ? rule.op : '>=');
-        //     inputNumber(b, 'Threshold', 'threshold', (rule && rule.threshold != null) ? rule.threshold : 1.5, { step: 0.01, min: 0 });
-        //     b.appendChild(el('div', { class: 'muted', html: 'RVOL = volume / MA(volume, length). E.g. RVOL ≥ 1.5 means volume is 50% above normal.' }));
-        //   });
-        //   block('volume_osc_increase', (b) => {
-        //     inputNumber(b, 'Fast length', 'fast', (rule && rule.fast != null) ? rule.fast : 12, { min: 1 });
-        //     inputNumber(b, 'Slow length', 'slow', (rule && rule.slow != null) ? rule.slow : 26, { min: 1 });
-        //     inputNumber(b, 'Min % increase', 'min_pct', (rule && rule.min_pct != null) ? rule.min_pct : 0.1, { step: 0.01, min: 0 });
-        //     inputNumber(b, 'Lookback bars (N)', 'lookback', (rule && rule.lookback != null) ? rule.lookback : 3, { min: 1 });
-        //     b.appendChild(el('div', { class: 'muted', html: 'True if (fast - slow) / slow increases by at least min % over N bars.' }));
-        //   });
-        //   block('volume_above_ma', (b) => {
-        //     select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], (rule && rule.ma_type != null) ? rule.ma_type : 'ema');
-        //     inputNumber(b, 'MA length', 'length', (rule && rule.length != null) ? rule.length : 20, { min: 1 });
-        //     inputNumber(b, 'Min % above MA', 'min_pct', (rule && rule.min_pct != null) ? rule.min_pct : 0.1, { step: 0.01, min: 0 });
-        //     b.appendChild(el('div', { class: 'muted', html: 'True if volume is at least min % above the MA.' }));
-        //   });
-        // }
+        if (section === 'context' || section === 'signal') {
+          block('relative_volume', (b) => {
+            select(b, 'MA type', 'ma_type', [['sma', 'SMA'], ['ema', 'EMA']], (rule && rule.ma_type != null) ? rule.ma_type : 'sma');
+            inputNumber(b, 'MA length', 'length', (rule && rule.length != null) ? rule.length : 20, { min: 1 });
+            select(b, 'Operator', 'op', [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<']], (rule && rule.op != null) ? rule.op : '>=');
+            inputNumber(b, 'Threshold', 'threshold', (rule && rule.threshold != null) ? rule.threshold : 1.5, { step: 0.01, min: 0 });
+            b.appendChild(el('div', { class: 'muted', html: 'RVOL = volume / MA(volume, length). E.g. RVOL ≥ 1.5 means volume is 50% above normal.' }));
+          });
+          block('volume_osc_increase', (b) => {
+            inputNumber(b, 'Fast length', 'fast', (rule && rule.fast != null) ? rule.fast : 12, { min: 1 });
+            inputNumber(b, 'Slow length', 'slow', (rule && rule.slow != null) ? rule.slow : 26, { min: 1 });
+            inputNumber(b, 'Min % increase', 'min_pct', (rule && rule.min_pct != null) ? rule.min_pct : 0.1, { step: 0.01, min: 0 });
+            inputNumber(b, 'Lookback bars (N)', 'lookback', (rule && rule.lookback != null) ? rule.lookback : 3, { min: 1 });
+            b.appendChild(el('div', { class: 'muted', html: 'True if (fast - slow) / slow increases by at least min % over N bars.' }));
+          });
+          block('volume_above_ma', (b) => {
+            select(b, 'MA type', 'ma_type', [['ema', 'EMA'], ['sma', 'SMA']], (rule && rule.ma_type != null) ? rule.ma_type : 'ema');
+            inputNumber(b, 'MA length', 'length', (rule && rule.length != null) ? rule.length : 20, { min: 1 });
+            inputNumber(b, 'Min % above MA', 'min_pct', (rule && rule.min_pct != null) ? rule.min_pct : 0.1, { step: 0.01, min: 0 });
+            b.appendChild(el('div', { class: 'muted', html: 'True if volume is at least min % above the MA.' }));
+          });
+        }
 
         // Initialize row UI (set selected type, show param block, wire inputs)
         (function initRow() {
@@ -1155,7 +1769,7 @@
       }
 
       function applyPrimaryContextType() {
-        const t = String(primaryContextSel?.value || 'ma_stack');
+        const t = String(primaryContextSel?.value || 'none');
         if (maStackBlock) {
           maStackBlock.style.display = (t === 'ma_stack') ? '' : 'none';
         }
@@ -1182,7 +1796,7 @@
       const addContextBtn = document.getElementById('add-context');
       if (addContextBtn && !addContextBtn.dataset.guidedV2Wired) {
         addContextBtn.addEventListener('click', () => {
-          const primary = String(primaryContextSel?.value || 'ma_stack');
+          const primary = String(primaryContextSel?.value || 'none');
           if (primary === 'ma_stack') {
             if (maStackBlock) {
               maStackBlock.style.display = '';
@@ -1245,6 +1859,18 @@
 
         const force = !!(opts && opts.force);
 
+        // If the user is actively editing a context row/input, avoid auto-refreshing
+        // to prevent the preview constantly reloading while typing. Honor `force`.
+        try {
+          const active = document.activeElement;
+          if (!force && active && ctxContainer && ctxContainer.contains(active)) {
+            // postpone refresh until user finishes editing
+            return;
+          }
+        } catch (e) {
+          // ignore and continue
+        }
+
         // Debounce to avoid spamming the server on every keystroke.
         if (ctxVisTimer) window.clearTimeout(ctxVisTimer);
         const delayMs = force ? 0 : 350;
@@ -1286,6 +1912,18 @@
         }
 
         const force = !!(opts && opts.force);
+
+        // If user is focused inside any signal/trigger/context inputs, avoid
+        // auto-refreshing the setup visual unless forced. This prevents reload
+        // loops while configuring rules.
+        try {
+          const active = document.activeElement;
+          if (!force && active && (ctxContainer?.contains(active) || sigContainer?.contains(active) || trgContainer?.contains(active))) {
+            return;
+          }
+        } catch (e) {
+          // ignore
+        }
 
         if (setupVisTimer) window.clearTimeout(setupVisTimer);
         const delayMs = force ? 0 : 450;
@@ -1350,6 +1988,9 @@
           trigger_atr_mult: num('trigger_atr_mult'),
           trigger_custom_bull_expr: val('trigger_custom_bull_expr') || '',
           trigger_custom_bear_expr: val('trigger_custom_bear_expr') || '',
+          // Visual dataset hints
+          asset: val('visual_symbol') || val('symbol') || '',
+          asset_class: val('visual_asset_class') || '',
           context_rules: safeParseJson(ctxHidden?.value),
           signal_rules: safeParseJson(sigHidden?.value),
           trigger_rules: safeParseJson(trgHidden?.value)

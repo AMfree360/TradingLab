@@ -3,7 +3,7 @@
   <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
   <h2>Step 4 — Context (Regime) + Trigger</h2>
 
-  <form id="guided_step4_form" action="/create-strategy-guided/step4" method="post" novalidate>
+  <form id="guided_step4_form" action="/create-strategy-guided/step4" method="post" novalidate onsubmit="return (window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(this))">
     {% if csrf_token %}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
     {% endif %}
@@ -68,6 +68,8 @@
     {% set ctf = draft.get('context_tf') or '' %}
     <input name="context_tf" list="tf-options" value="{{ ctf }}" placeholder="(leave blank to use entry TF)" />
 
+    
+
     <label>
       <input type="checkbox" name="align_with_context" {% if draft.get('align_with_context') %}checked{% endif %} />
       Align direction with context (LONG only if bull context, SHORT only if bear context)
@@ -96,6 +98,23 @@
     </div>
     <!-- Global tips moved into per-row help panels to reduce clutter. -->
     <div id="context-rules" style="margin-top:10px;"></div>
+
+    <div style="margin-top:8px; display:flex; gap:12px; align-items:center;">
+      <div>
+        <label>Visual asset class</label>
+        {% set vac = (draft.get('visual_asset_class') or '') %}
+        <select name="visual_asset_class" id="visual_asset_class">
+          <option value="" {% if vac == '' %}selected{% endif %}>Auto</option>
+          <option value="crypto" {% if vac == 'crypto' %}selected{% endif %}>Crypto</option>
+          <option value="fx" {% if vac == 'fx' %}selected{% endif %}>FX</option>
+          <option value="futures" {% if vac == 'futures' %}selected{% endif %}>Futures</option>
+        </select>
+      </div>
+      <div>
+        <label>Visual symbol (optional)</label>
+        <input name="visual_symbol" id="visual_symbol" type="text" placeholder="e.g. BTCUSDT or EURUSD" value="{{ draft.get('visual_symbol') or '' }}" />
+      </div>
+    </div>
 
     <div class="card" id="context-visual-card" style="margin-top:12px;">
       <h4>Context visual</h4>
@@ -212,7 +231,6 @@
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   <script src="/static/js/guided_builder_v2_model.js"></script>
   <script src="/static/js/guided_builder_v2_state.js"></script>
-  <script src="/static/js/guided_builder_v2_dom.js"></script>
   <script src="/static/js/guided_builder_v2.js"></script>
   <script>
     // Fallback wiring: ensure preview/reload buttons call preview helpers
@@ -400,14 +418,20 @@
         if (checks > 10) {
           logDbg('helpers not present after ' + checks + ' checks');
           clearInterval(inter);
-          // Try reloading the main script as a last-resort recovery
+          // Auto-reload is gated behind a debug flag to avoid interrupting
+          // normal user flows. Set `window.guidedBuilderV2AutoReload = true`
+          // in the console when actively developing to re-enable.
           try {
-            const s = document.createElement('script');
-            s.src = '/static/js/guided_builder_v2.js?reload=' + Date.now();
-            s.onload = function() { logDbg('reloaded guided_builder_v2.js'); };
-            s.onerror = function() { logDbg('reload failed for guided_builder_v2.js'); };
-            document.head.appendChild(s);
-            logDbg('attempted to reload guided_builder_v2.js');
+            if (window.guidedBuilderV2AutoReload) {
+              const s = document.createElement('script');
+              s.src = '/static/js/guided_builder_v2.js?reload=' + Date.now();
+              s.onload = function() { logDbg('reloaded guided_builder_v2.js'); };
+              s.onerror = function() { logDbg('reload failed for guided_builder_v2.js'); };
+              document.head.appendChild(s);
+              logDbg('attempted to reload guided_builder_v2.js (auto-reload enabled)');
+            } else {
+              logDbg('auto-reload skipped (window.guidedBuilderV2AutoReload not set)');
+            }
           } catch (e) { logDbg('script reload error: ' + (e && e.message)); }
         }
       }, 300);

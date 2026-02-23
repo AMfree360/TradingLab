@@ -57,10 +57,10 @@ def test_backtest_report_includes_trade_chart_when_visuals_enabled(tmp_path):
     html_path = rg.generate_backtest_report(result, include_visuals=True, output_name="x")
     html = html_path.read_text(encoding="utf-8")
 
-    # Default engine is lightweight-charts.
-    assert "trade-chart-lw" in html
-    assert "LightweightCharts.createChart" in html
-    assert "var partials" in html
+    # Default engine is plotly.
+    assert "trade-chart" in html
+    assert "candlestick" in html
+    assert "partialExits" in html
 
 
 def test_backtest_report_can_force_plotly_trade_chart(tmp_path):

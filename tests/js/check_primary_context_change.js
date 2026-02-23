@@ -13,7 +13,7 @@ async function run() {
   const js = read(jsPath);
   const modelJs = read('gui_launcher/static/js/guided_builder_v2_model.js');
   const stateJs = read('gui_launcher/static/js/guided_builder_v2_state.js');
-  const domJs = read('gui_launcher/static/js/guided_builder_v2_dom.js');
+  const domJs = read('gui_launcher/static/js/archived_builder_duplicates/guided_builder_v2_dom.js');
 
   const dom = new JSDOM(html, { runScripts: 'dangerously', resources: 'usable', url: 'http://localhost' });
   const { window } = dom;

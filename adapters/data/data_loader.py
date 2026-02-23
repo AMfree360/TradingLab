@@ -81,6 +81,44 @@ class DataLoader:
     
     def _load_csv(self, file_path: Path, **kwargs) -> pd.DataFrame:
         """Load CSV file with automatic separator detection."""
+        # Quick binary/non-text detection: read a small chunk and ensure it's likely text.
+        try:
+            with open(file_path, 'rb') as bf:
+                sample = bf.read(4096)
+            if sample:
+                # Treat NUL bytes as binary immediately
+                if b'\x00' in sample:
+                    snippet = sample[:64]
+                    logger.error(
+                        "File appears to be binary (contains NUL bytes): %s. First bytes: %s",
+                        file_path,
+                        snippet,
+                    )
+                    raise ValueError(
+                        f"Data file does not appear to be a text CSV (contains NUL bytes). First bytes: {snippet!r}"
+                    )
+
+                # Count printable characters
+                printable = sum(1 for b in sample if (32 <= b <= 126) or b in (9, 10, 13))
+                non_printable_ratio = 1.0 - (printable / max(len(sample), 1))
+                if non_printable_ratio > 0.3:
+                    snippet = sample[:64]
+                    logger.error(
+                        "File appears to be non-text/binary (non-printable ratio %.2f): %s. First bytes: %s",
+                        non_printable_ratio,
+                        file_path,
+                        snippet,
+                    )
+                    raise ValueError(
+                        f"Data file does not appear to be a text CSV (high non-printable byte ratio {non_printable_ratio:.2f}). First bytes: {snippet!r}"
+                    )
+        except ValueError:
+            # re-raise ValueError to caller
+            raise
+        except Exception:
+            # Any unexpected failure in detection should not block processing; continue
+            logger.debug(f"Binary/text detection failed for {file_path}, proceeding with normal CSV load")
+
         # Determine encoding: prefer provided, else try utf-8 and fall back to latin-1
         enc = kwargs.pop('encoding', None) or 'utf-8'
 
@@ -107,8 +145,8 @@ class DataLoader:
                 parts = first_line.split(';')
                 timestamp_str = parts[0].strip()
                 if len(timestamp_str) >= 14 and timestamp_str.replace(' ', '').isdigit():
-                    # Parse this special format
-                    return self._parse_semicolon_ohlcv_format(file_path)
+                    # Parse this special format using negotiated encoding
+                    return self._parse_semicolon_ohlcv_format(file_path, encoding=enc)
         except Exception as e:
             logger.debug(f"Could not check for special format: {e}")
         
@@ -125,14 +163,14 @@ class DataLoader:
                         # Binance timestamps are in milliseconds (typically > 1e12)
                         if first_val > 1e12:
                             # Likely Binance klines format
-                            return self._parse_binance_klines_format(file_path)
+                            return self._parse_binance_klines_format(file_path, encoding=enc)
                     except ValueError:
                         pass
         except Exception as e:
             logger.debug(f"Could not check for Binance format: {e}")
         
-        # Detect separator
-        sep = self._detect_separator(file_path)
+        # Detect separator (use negotiated encoding)
+        sep = self._detect_separator(file_path, enc)
         
         # Use detected separator unless overridden
         if 'sep' not in kwargs and 'delimiter' not in kwargs:
@@ -142,14 +180,61 @@ class DataLoader:
         kwargs['encoding'] = enc
 
         logger.debug(f"Loading CSV with separator: '{sep}' encoding: '{enc}'")
-        df = pd.read_csv(file_path, **kwargs)
+        try:
+            df = pd.read_csv(file_path, **kwargs)
+        except UnicodeDecodeError:
+            # Pandas may raise UnicodeDecodeError despite our earlier checks.
+            # Retry by opening the file with latin-1 and errors='replace', and pass
+            # the file handle to pandas so it doesn't re-decode with utf-8.
+            logger.warning(f"pandas.read_csv failed with utf-8 for {file_path}; retrying with latin-1 (replace)")
+            kwargs_fallback = dict(kwargs)
+            # Remove encoding to avoid conflict when passing a file handle
+            kwargs_fallback.pop('encoding', None)
+            try:
+                with open(file_path, 'r', encoding='latin-1', errors='replace') as fh:
+                    try:
+                        df = pd.read_csv(fh, **kwargs_fallback)
+                    except pd.errors.ParserError as pe2:
+                        logger.warning(
+                            "ParserError while reading with latin-1 for %s: %s; retrying with python engine and on_bad_lines='skip'",
+                            file_path,
+                            pe2,
+                        )
+                        # Retry with python engine and skip bad lines (lenient)
+                        kwargs_retry = dict(kwargs)
+                        kwargs_retry.pop('encoding', None)
+                        try:
+                            df = pd.read_csv(
+                                file_path,
+                                engine='python',
+                                on_bad_lines='skip',
+                                encoding='latin-1',
+                                **kwargs_retry,
+                            )
+                        except Exception:
+                            logger.exception("Retry with python engine failed for %s", file_path)
+                            raise
+            except Exception:
+                logger.exception("Unexpected error while attempting latin-1 fallback for %s", file_path)
+                raise
+        except pd.errors.ParserError as pe:
+            # Handle C-engine tokenization errors (e.g., inconsistent field counts)
+            logger.warning(f"pandas.ParserError for {file_path}: {pe}; retrying with python engine and on_bad_lines='skip'")
+            try:
+                kwargs_fallback = dict(kwargs)
+                kwargs_fallback.pop('encoding', None)
+                # Use python engine with lenient bad-line handling
+                df = pd.read_csv(file_path, engine='python', on_bad_lines='skip', encoding=enc, **{k: v for k, v in kwargs_fallback.items() if k != 'sep' or v})
+            except Exception as e2:
+                logger.exception("Retry after ParserError failed for %s: %s", file_path, e2)
+                raise
         
         logger.debug(f"CSV loaded: {df.shape[0]} rows, {df.shape[1]} columns")
         logger.debug(f"Columns: {df.columns.tolist()}")
         
         return df
     
-    def _parse_semicolon_ohlcv_format(self, file_path: Path) -> pd.DataFrame:
+    def _parse_semicolon_ohlcv_format(self, file_path: Path, encoding: str = 'utf-8') -> pd.DataFrame:
         """Parse CSV with format: timestamp;open;high;low;close;volume per line."""
         def parse_row(row_str):
             """Parse a row like '20250914 004800;6645.25;6645.25;6645.25;6645.25;1'"""
@@ -175,15 +260,26 @@ class DataLoader:
                     }
             return None
         
-        # Read and parse all lines
+        # Read and parse all lines using negotiated encoding
         parsed_rows = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:  # Skip empty lines
-                    parsed = parse_row(line)
-                    if parsed:
-                        parsed_rows.append(parsed)
+        try:
+            with open(file_path, 'r', encoding=encoding, errors='strict') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:  # Skip empty lines
+                        parsed = parse_row(line)
+                        if parsed:
+                            parsed_rows.append(parsed)
+        except UnicodeDecodeError:
+            # Fallback to latin-1 with replacement to avoid crashing on legacy files
+            logger.warning(f"Falling back to latin-1 while parsing semicolon format for {file_path}")
+            with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        parsed = parse_row(line)
+                        if parsed:
+                            parsed_rows.append(parsed)
         
         if not parsed_rows:
             raise ValueError(f"Could not parse any rows from {file_path}")
@@ -196,7 +292,7 @@ class DataLoader:
         
         return df
     
-    def _parse_binance_klines_format(self, file_path: Path) -> pd.DataFrame:
+    def _parse_binance_klines_format(self, file_path: Path, encoding: str = 'utf-8') -> pd.DataFrame:
         """Parse Binance klines CSV format (no header).
         
         Format: Open time, Open, High, Low, Close, Volume, Close time, Quote volume, Trades, Taker buy base, Taker buy quote, Ignore
@@ -223,15 +319,25 @@ class DataLoader:
                     return None
             return None
         
-        # Read and parse all lines
+        # Read and parse all lines using negotiated encoding
         parsed_rows = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:  # Skip empty lines
-                    parsed = parse_row(line)
-                    if parsed:
-                        parsed_rows.append(parsed)
+        try:
+            with open(file_path, 'r', encoding=encoding, errors='strict') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:  # Skip empty lines
+                        parsed = parse_row(line)
+                        if parsed:
+                            parsed_rows.append(parsed)
+        except UnicodeDecodeError:
+            logger.warning(f"Falling back to latin-1 while parsing Binance klines for {file_path}")
+            with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        parsed = parse_row(line)
+                        if parsed:
+                            parsed_rows.append(parsed)
         
         if not parsed_rows:
             raise ValueError(f"Could not parse any rows from {file_path}")
@@ -259,26 +365,32 @@ class DataLoader:
         
         return df
     
-    def _detect_separator(self, file_path: Path) -> str:
-        """Detect CSV separator (comma, tab, semicolon)."""
+    def _detect_separator(self, file_path: Path, encoding: str = 'utf-8') -> str:
+        """Detect CSV separator (comma, tab, semicolon) using provided encoding with fallback."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                first_line = f.readline()
-            
+            try:
+                with open(file_path, 'r', encoding=encoding, errors='strict') as f:
+                    first_line = f.readline()
+            except UnicodeDecodeError:
+                # Fallback to latin-1 if the chosen encoding fails
+                logger.warning(f"Falling back to latin-1 while detecting separator for {file_path}")
+                with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
+                    first_line = f.readline()
+
             # Count occurrences of each separator
             counts = {
                 '\t': first_line.count('\t'),
                 ';': first_line.count(';'),
                 ',': first_line.count(',')
             }
-            
+
             # Return separator with most occurrences
             sep = max(counts, key=counts.get)
-            
+
             # If no clear winner, default to comma
             if counts[sep] == 0:
                 sep = ','
-            
+
             logger.debug(f"Detected separator: '{sep}' (counts: {counts})")
             return sep
         except Exception as e:

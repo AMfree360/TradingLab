@@ -286,6 +286,9 @@ app.state.builder_v3_strict_save_conflict = str(os.environ.get("BUILDER_V3_STRIC
 # The checker may be synchronous (returning bool) or async (awaitable). Default: None.
 app.state.builder_v3_permission_checker = None
 
+# Explicitly mark Builder V3 as disabled in this branch - assets/routes are archived.
+app.state.builder_v3_enabled = False
+
 # Static + reports
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.mount("/reports", StaticFiles(directory=str(REPO_ROOT / "reports")), name="reports")
@@ -366,6 +369,35 @@ def debug_requests(request: Request):
         )
     html.append("</div>")
     return HTMLResponse("\n".join(html))
+
+
+@app.post("/debug/beacon")
+async def debug_beacon(request: Request):
+    """Temporary debug endpoint to receive client sendBeacon/XHR payloads.
+
+    Logs content-type and a short preview of the raw request body.
+    """
+    try:
+        content_type = request.headers.get("content-type")
+        raw = await request.body()
+        try:
+            preview = raw[:2048].decode("utf-8", errors="replace")
+        except Exception:
+            preview = repr(raw[:2048])
+        try:
+            print('[guided-debug] debug/beacon ->', json.dumps({
+                'content_type': content_type,
+                'len': len(raw),
+                'preview': preview[:1000]
+            }, ensure_ascii=False))
+        except Exception:
+            print('[guided-debug] debug/beacon -> content_type=', content_type, 'len=', len(raw))
+    except Exception as e:
+        try:
+            print('[guided-debug] debug/beacon read failed', e)
+        except Exception:
+            pass
+    return JSONResponse({"ok": True})
 
 
 @app.get("/builder-v3")
@@ -790,6 +822,33 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(extra_trigger_rules, list):
         extra_trigger_rules = []
 
+    def _effective_tf_label(rules: list, global_raw: str, default_label: str) -> str:
+        """Compute a compact label for TFs used by a list of per-rule entries.
+
+        - If no rule specifies an explicit TF, return the provided `default_label`.
+        - If all explicit per-rule TFs are the same, return that TF string.
+        - If multiple different explicit TFs are present, return 'mixed'.
+        """
+        vals = set()
+        for r in (rules or []):
+            if not isinstance(r, dict):
+                continue
+            raw = str(r.get("tf") or "").strip().lower()
+            if not raw:
+                continue
+            if raw in {"default", "(default)", "entry", "(entry)"}:
+                continue
+            vals.add(raw)
+        if not vals:
+            return default_label
+        if len(vals) == 1:
+            return next(iter(vals))
+        return "mixed"
+
+    # Compute effective labels that reflect any per-rule TF overrides.
+    eff_sig_tf_label = _effective_tf_label(signal_rules, signal_tf_raw, sig_tf_label)
+    eff_trg_tf_label = _effective_tf_label(extra_trigger_rules, trigger_tf_raw, trg_tf_label)
+
     def _resolve_rule_tf(rule: dict[str, Any], default_tf: str) -> str:
         raw = str(rule.get("tf") or "").strip().lower()
         if not raw or raw in {"default", "(default)", "entry", "(entry)"}:
@@ -797,6 +856,10 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
         return raw
 
     def _context_rule_items(rule: dict[str, Any], direction: str) -> list[dict[str, str]]:
+        # Respect per-rule TF selection when present
+        tf = _resolve_rule_tf(rule, ctx_tf or entry_tf)
+        tf_label = str(rule.get("tf") or ctx_tf_label)
+
         # Disable volume-based context rules temporarily
         rtype = str(rule.get("type") or "").strip().lower()
         if rtype in {"relative_volume", "volume_osc_increase", "volume_above_ma"} or "volume" in rtype:
@@ -810,8 +873,8 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             threshold = float(rule.get("threshold") or 1.5)
             rvol = f"volume / {ma_type}(volume, {length})"
             expr = f"{rvol} {op} {threshold}"
-            label = f"RVOL: {rvol} {op} {threshold} on {ctx_tf_label}"
-            items.append({"group": "Volume", "label": label, "expr": _tf_expr(expr, ctx_tf)})
+            label = f"RVOL: {rvol} {op} {threshold} on {tf_label}"
+            items.append({"group": "Volume", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
             return items
 
         # Volume Oscillator Increase
@@ -822,8 +885,8 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             lookback = int(rule.get("lookback") or 3)
             osc = f"(ema(volume, {fast}) - ema(volume, {slow})) / ema(volume, {slow})"
             expr = f"{osc} > {min_pct} and {osc} > shift({osc}, {lookback})"
-            label = f"Volume Oscillator Increase: fast={fast}, slow={slow}, min%={min_pct}, N={lookback} on {ctx_tf_label}"
-            items.append({"group": "Volume", "label": label, "expr": _tf_expr(expr, ctx_tf)})
+            label = f"Volume Oscillator Increase: fast={fast}, slow={slow}, min%={min_pct}, N={lookback} on {tf_label}"
+            items.append({"group": "Volume", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
             return items
 
         # Volume Above MA
@@ -833,11 +896,39 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             min_pct = float(rule.get("min_pct") or 0.1)
             ma = f"{ma_type}(volume, {length})"
             expr = f"(volume - {ma}) / {ma} > {min_pct}"
-            label = f"Volume Above {ma_type.upper()}({length}): min%={min_pct} on {ctx_tf_label}"
-            items.append({"group": "Volume", "label": label, "expr": _tf_expr(expr, ctx_tf)})
+            label = f"Volume Above {ma_type.upper()}({length}): min%={min_pct} on {tf_label}"
+            items.append({"group": "Volume", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
             return items
         d = direction.strip().lower()
         items: list[dict[str, str]] = []
+
+        # ATR spike (volatility spike) - treat as a context volatility regime
+        if rtype == "atr_spike":
+            atr_len = int(rule.get("atr_len") or 14)
+            mult = float(rule.get("mult") or 1.5)
+            lookback = int(rule.get("lookback") or 1)
+            atr = _wrap_tf_if_missing(f"atr({atr_len})", tf)
+            expr = f"{atr} > {mult} * shift({atr}, {lookback})"
+            label = f"ATR spike: ATR({atr_len}) > {mult}x {lookback}-lag on {tf_label}"
+            items.append({"group": "Volatility", "label": label, "expr": expr})
+            return items
+
+        # Bollinger-style context (anchor TF): highlight outside-band regimes
+        if rtype == "bollinger_context":
+            length = int(rule.get("length") or 20)
+            mult = float(rule.get("mult") or 2.0)
+            basis = f"sma(close, {length})"
+            dev = f"stdev(close, {length})"
+            upper = f"({basis} + {mult} * {dev})"
+            lower = f"({basis} - {mult} * {dev})"
+            if d == "bull":
+                expr = f"close > {upper}"
+                label = f"Close above Bollinger upper ({length},{mult:g}) on {tf_label}"
+            else:
+                expr = f"close < {lower}"
+                label = f"Close below Bollinger lower ({length},{mult:g}) on {tf_label}"
+            items.append({"group": "Structure", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
 
         if rtype in {"", "none"}:
             return items
@@ -1085,48 +1176,6 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
         return items
 
     def _signal_rule_items(rule: dict[str, Any], direction: str) -> list[dict[str, str]]:
-        # Disable volume-based signal rules temporarily
-        rtype = str(rule.get("type") or "").strip().lower()
-        if rtype in {"relative_volume", "volume_osc_increase", "volume_above_ma"} or "volume" in rtype:
-            return []
-
-        # Relative Volume (RVOL)
-        if rtype == "relative_volume":
-            ma_type = str(rule.get("ma_type") or "sma").strip().lower()
-            length = int(rule.get("length") or 20)
-            op = str(rule.get("op") or ">=").strip()
-            threshold = float(rule.get("threshold") or 1.5)
-            rvol = f"volume / {ma_type}(volume, {length})"
-            expr = f"{rvol} {op} {threshold}"
-            label = f"RVOL: {rvol} {op} {threshold} on {tf}"
-            expr = _apply_valid_for_bars(expr, valid_for)
-            items.append({"group": "Volume", "label": label, "expr": _tf_expr(expr, tf)})
-            return items
-
-        # Volume Oscillator Increase
-        if rtype == "volume_osc_increase":
-            fast = int(rule.get("fast") or 12)
-            slow = int(rule.get("slow") or 26)
-            min_pct = float(rule.get("min_pct") or 0.1)
-            lookback = int(rule.get("lookback") or 3)
-            osc = f"(ema(volume, {fast}) - ema(volume, {slow})) / ema(volume, {slow})"
-            expr = f"{osc} > {min_pct} and {osc} > shift({osc}, {lookback})"
-            label = f"Volume Oscillator Increase: fast={fast}, slow={slow}, min%={min_pct}, N={lookback} on {tf}"
-            expr = _apply_valid_for_bars(expr, valid_for)
-            items.append({"group": "Volume", "label": label, "expr": _tf_expr(expr, tf)})
-            return items
-
-        # Volume Above MA
-        if rtype == "volume_above_ma":
-            ma_type = str(rule.get("ma_type") or "ema").strip().lower()
-            length = int(rule.get("length") or 20)
-            min_pct = float(rule.get("min_pct") or 0.1)
-            ma = f"{ma_type}(volume, {length})"
-            expr = f"(volume - {ma}) / {ma} > {min_pct}"
-            label = f"Volume Above {ma_type.upper()}({length}): min%={min_pct} on {tf}"
-            expr = _apply_valid_for_bars(expr, valid_for)
-            items.append({"group": "Volume", "label": label, "expr": _tf_expr(expr, tf)})
-            return items
         d = direction.strip().lower()
         rtype = str(rule.get("type") or "").strip().lower()
         items: list[dict[str, str]] = []
@@ -1301,7 +1350,106 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             )
             return items
 
-        items.append({"group": "Signal", "label": f"Signal: {rtype}", "expr": "(unknown)"})
+        # Z-score (statistical) signal
+        # ATR spike signal
+        if rtype == "atr_spike":
+            atr_len = int(rule.get("atr_len") or 14)
+            mult = float(rule.get("mult") or 1.5)
+            lookback = int(rule.get("lookback") or 1)
+            atr = f"atr({atr_len})"
+            expr = f"{atr} > {mult} * shift({atr}, {lookback})"
+            label = f"ATR spike: ATR({atr_len}) > {mult}x {lookback}-lag on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Signal", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
+        if rtype == "z_score":
+            length = int(rule.get("length") or 20)
+            try:
+                op = str(rule.get("op") or ">").strip()
+            except Exception:
+                op = ">"
+            try:
+                threshold = float(rule.get("threshold") or 2.0)
+            except Exception:
+                threshold = 2.0
+            mean = f"sma(close, {length})"
+            std = f"stdev(close, {length})"
+            # Mean-reversion semantics (symmetric): LONG when z < -|thr|, SHORT when z > |thr|.
+            thr = abs(float(threshold))
+            if d == "bull":
+                expr = f"(close - {mean}) / ({std} + 1e-9) < -{thr}"
+                label = f"Z-score (len={length}) < -{thr:g} on {tf}"
+            else:
+                expr = f"(close - {mean}) / ({std} + 1e-9) > {thr}"
+                label = f"Z-score (len={length}) > {thr:g} on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Signal", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
+        # Bollinger outlier signal
+        if rtype == "bollinger_outlier":
+            length = int(rule.get("length") or 20)
+            mult = float(rule.get("mult") or 2.0)
+            d = direction.strip().lower()
+            basis = f"sma(close, {length})"
+            dev = f"stdev(close, {length})"
+            upper = f"({basis} + {mult} * {dev})"
+            lower = f"({basis} - {mult} * {dev})"
+            if d == "bull":
+                expr = f"crosses_above(close, {upper})"
+                label = f"Bollinger outlier (above) {length},{mult:g} on {tf}"
+            else:
+                expr = f"crosses_below(close, {lower})"
+                label = f"Bollinger outlier (below) {length},{mult:g} on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Signal", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
+        # ATR deviation (price deviates from mean by ATR)
+        if rtype == "atr_deviation":
+            length = int(rule.get("length") or 20)
+            atr_len = int(rule.get("atr_len") or 14)
+            try:
+                threshold = float(rule.get("threshold") or 1.0)
+            except Exception:
+                threshold = 1.0
+            mean = f"sma(close, {length})"
+            atr = f"atr({atr_len})"
+            expr = f"abs(close - {mean}) / ({atr} + 1e-9) > {threshold}"
+            label = f"ATR deviation (len={length}, atr={atr_len}) > {threshold:g} on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Signal", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
+        # Delta divergence (futures) - simple divergence: price moves opposite to delta
+        if rtype == "delta_divergence":
+            try:
+                threshold = float(rule.get("threshold") or 0.0)
+            except Exception:
+                threshold = 0.0
+            expr = f"(close - shift(close, 1)) * delta < -{threshold}"
+            label = f"Delta divergence (threshold={threshold:g}) on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Signal", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
+        # Volume rejection (signal-style) - spike then reject pattern
+        if rtype == "volume_rejection":
+            vol_len = int(rule.get("vol_len") or 20)
+            mult = float(rule.get("mult") or 3.0)
+            d = direction.strip().lower()
+            vol_ma = f"sma(volume, {vol_len})"
+            if d == "bull":
+                expr = f"volume > {mult} * {vol_ma} and close < open"
+                label = f"Volume rejection (spike+bear close) {vol_len},{mult:g} on {tf}"
+            else:
+                expr = f"volume > {mult} * {vol_ma} and close > open"
+                label = f"Volume rejection (spike+bull close) {vol_len},{mult:g} on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Volume", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
         return items
 
     def _trigger_rule_items(rule: dict[str, Any], direction: str) -> list[dict[str, str]]:
@@ -1339,6 +1487,34 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
                     "expr": expr,
                 }
             )
+            return items
+
+        # Volume rejection trigger
+        if rtype == "volume_rejection":
+            vol_len = int(rule.get("vol_len") or 20)
+            mult = float(rule.get("mult") or 3.0)
+            d = direction.strip().lower()
+            vol_ma = f"sma(volume, {vol_len})"
+            if d == "bull":
+                expr = f"volume > {mult} * {vol_ma} and close < open"
+                label = f"Volume rejection (spike+bear close) {vol_len},{mult:g} on {tf}"
+            else:
+                expr = f"volume > {mult} * {vol_ma} and close > open"
+                label = f"Volume rejection (spike+bull close) {vol_len},{mult:g} on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Trigger", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
+            return items
+
+        # Delta divergence trigger (futures)
+        if rtype == "delta_divergence":
+            try:
+                threshold = float(rule.get("threshold") or 0.0)
+            except Exception:
+                threshold = 0.0
+            expr = f"(close - shift(close, 1)) * delta < -{threshold}"
+            label = f"Delta divergence (threshold={threshold:g}) on {tf}"
+            expr = _apply_valid_for_bars(expr, valid_for)
+            items.append({"group": "Trigger", "label": label, "expr": _wrap_tf_if_missing(expr, tf)})
             return items
 
         if rtype == "inside_bar_breakout":
@@ -1579,7 +1755,16 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
     def _signal_items(direction: str) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
         for r in signal_rules:
-            if isinstance(r, dict):
+            if not isinstance(r, dict):
+                continue
+            side_val = str(r.get("side") or "both").strip().lower()
+            # default to both for legacy rules
+            if side_val not in {"both", "long", "short"}:
+                side_val = "both"
+            # map preview direction (bull/bear) to long/short
+            if (direction.strip().lower() == "bull" and side_val in {"both", "long"}) or (
+                direction.strip().lower() == "bear" and side_val in {"both", "short"}
+            ):
                 out.extend(_signal_rule_items(r, direction))
         return out
 
@@ -1611,7 +1796,14 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             )
 
         for r in extra_trigger_rules:
-            if isinstance(r, dict):
+            if not isinstance(r, dict):
+                continue
+            side_val = str(r.get("side") or "both").strip().lower()
+            if side_val not in {"both", "long", "short"}:
+                side_val = "both"
+            if (direction.strip().lower() == "bull" and side_val in {"both", "long"}) or (
+                direction.strip().lower() == "bear" and side_val in {"both", "short"}
+            ):
                 out.extend(_trigger_rule_items(r, direction))
         return out
 
@@ -1640,8 +1832,8 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
     return {
         "entry_tf": entry_tf,
         "context_tf": ctx_tf_label,
-        "signal_tf": sig_tf_label,
-        "trigger_tf": trg_tf_label,
+        "signal_tf": eff_sig_tf_label,
+        "trigger_tf": eff_trg_tf_label,
         "aligned_dual": aligned_dual,
         "long": {
             "enabled": long_enabled,
@@ -1650,7 +1842,12 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             "context": (
                 (
                     _context_items(long_ctx_dir)
-                    + sum((_context_rule_items(r, long_ctx_dir) for r in extra_context_rules if isinstance(r, dict)), [])
+                    + sum((
+                        _context_rule_items(r, long_ctx_dir)
+                        for r in extra_context_rules
+                        if isinstance(r, dict)
+                        and str(r.get("side") or "both").strip().lower() in {"both", "long"}
+                    ), [])
                 )
                 if long_enabled
                 else []
@@ -1665,7 +1862,12 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             "context": (
                 (
                     _context_items(short_ctx_dir)
-                    + sum((_context_rule_items(r, short_ctx_dir) for r in extra_context_rules if isinstance(r, dict)), [])
+                    + sum((
+                        _context_rule_items(r, short_ctx_dir)
+                        for r in extra_context_rules
+                        if isinstance(r, dict)
+                        and str(r.get("side") or "both").strip().lower() in {"both", "short"}
+                    ), [])
                 )
                 if short_enabled
                 else []
@@ -5222,8 +5424,37 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
     if not draft or draft.get("kind") != "guided":
         return RedirectResponse(url="/create-strategy-guided", status_code=303)
 
+    # Temporary debug: capture raw body and content-type to inspect beacon/XHR payloads
+    try:
+        raw_body = await request.body()
+        content_type = request.headers.get('content-type')
+        try:
+            preview = raw_body[:1024].decode('utf-8', errors='replace')
+        except Exception:
+            preview = repr(raw_body[:1024])
+        try:
+            print('[guided-debug] raw-request ->', json.dumps({'content_type': content_type, 'len': len(raw_body), 'preview': preview[:800]}, ensure_ascii=False))
+        except Exception:
+            print('[guided-debug] raw-request -> content_type=', content_type, 'len=', len(raw_body))
+    except Exception as _e:
+        try:
+            print('[guided-debug] raw-request read failed', _e)
+        except Exception:
+            pass
+
     form = await request.form()
     form_dict = {k: v for k, v in form.items()}
+    # Debug: log incoming rule JSONs to help diagnose missing-rules on submit
+    try:
+        import json
+        print('[guided-debug] submit form -> ' + json.dumps({
+            'draft_id': draft_id,
+            'context_rules_json': form_dict.get('context_rules_json'),
+            'signal_rules_json': form_dict.get('signal_rules_json'),
+            'trigger_rules_json': form_dict.get('trigger_rules_json')
+        }, default=str))
+    except Exception as _e:
+        print('[guided-debug] submit form log failed', _e)
 
     builder_mode = str(form_dict.get("builder_mode") or "").strip().lower()
     if str(draft.get("template") or "").strip().lower() == "builder_v2" or builder_mode == "v2":
@@ -5243,6 +5474,10 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
                         out.append(item)
                 return out
             except Exception:
+                try:
+                    print('[guided-debug] parse_rules_json failed for field', field_name, 'raw=', raw[:200])
+                except Exception:
+                    pass
                 return []
 
 
@@ -5365,6 +5600,18 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
         context_rules = _parse_rules_json("context_rules_json")
         signal_rules = _parse_rules_json("signal_rules_json")
         extra_trigger_rules = _parse_rules_json("trigger_rules_json")
+
+        # Debug: dump parsed rule objects for diagnostics
+        try:
+            import json
+
+            print('[guided-debug] parsed rules -> ' + json.dumps({
+                'context_rules': context_rules,
+                'signal_rules': signal_rules,
+                'trigger_rules': extra_trigger_rules,
+            }, default=str)[:8000])
+        except Exception:
+            pass
 
         draft.update(
             {

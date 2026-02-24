@@ -231,6 +231,52 @@
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   <script src="/static/js/guided_builder_v2_model.js"></script>
   <script src="/static/js/guided_builder_v2_state.js"></script>
+  <script>
+    // Prefer the richer renderer when the draft contains detailed rule objects
+    // (not just `side`), so reopening uses the same UI that created the spec.
+    (function () {
+      try {
+        const hasDetailed = function (arr) {
+          try {
+            if (!Array.isArray(arr)) return false;
+            for (const r of arr) {
+              if (!r || typeof r !== 'object') continue;
+              // Consider a rule "detailed" if it contains any key beyond
+              // the minimal UI-only keys, or if the `custom` field is
+              // non-empty (custom DSL counts as detailed).
+              const uiOnly = ['type','side','tf','valid_for_bars'];
+              const keys = Object.keys(r).filter(k => !uiOnly.includes(k));
+              if (keys.length > 0) {
+                // If the only extra key is `custom`, ensure it's non-empty.
+                if (keys.length === 1 && keys[0] === 'custom') {
+                  try { if (String(r.custom || '').trim() === '') continue; } catch (e) { continue; }
+                }
+                return true;
+              }
+            }
+          } catch (e) {}
+          return false;
+        };
+        const ctx = {{ (draft.get('context_rules') or []) | tojson }};
+        const sig = {{ (draft.get('signal_rules') or []) | tojson }};
+        const trg = {{ (draft.get('trigger_rules') or []) | tojson }};
+        if (hasDetailed(ctx) || hasDetailed(sig) || hasDetailed(trg)) {
+          window.guidedBuilderV2PreferFullRenderer = true;
+        }
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+  <script>
+    // Force the full renderer for Builder v2 pages by default so the
+    // richer per-type controls are used during creation/edit flows.
+    // This prevents the lighter fallback from later re-rendering and
+    // overwriting per-type dropdowns after user interaction.
+    try {
+      if (typeof window !== 'undefined') {
+        window.guidedBuilderV2PreferFullRenderer = true;
+      }
+    } catch (e) { /* ignore */ }
+  </script>
   <script src="/static/js/guided_builder_v2.js"></script>
   <script>
     // Fallback wiring: ensure preview/reload buttons call preview helpers

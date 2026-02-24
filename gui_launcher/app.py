@@ -220,7 +220,7 @@ def _spec_to_yaml_compact(spec: StrategySpec) -> str:
     return yaml.safe_dump(data, sort_keys=False)
 
 
-def _write_validated_spec_to_repo(*, spec: StrategySpec, old_spec_name: str) -> Path:
+def _write_validated_spec_to_repo(*, spec: StrategySpec, old_spec_name: str, extra_meta: dict[str, Any] | None = None) -> Path:
     """Write spec to research_specs and handle safe rename. Returns new path."""
 
     new_name = str(getattr(spec, "name", "") or "").strip()
@@ -245,7 +245,17 @@ def _write_validated_spec_to_repo(*, spec: StrategySpec, old_spec_name: str) -> 
     if new_path.exists() and (old_path is None or new_path.resolve() != old_path.resolve()):
         raise ValueError(f"Strategy name already exists: {new_name}")
 
-    new_path.write_text(_spec_to_yaml_compact(spec), encoding="utf-8")
+    # Serialize spec to YAML, optionally embedding additional UI metadata under
+    # a non-standard top-level key so guided-builder state (raw rule objects)
+    # is preserved in the repo spec file for later round-tripping.
+    import yaml
+
+    data = spec.model_dump(exclude_none=True, exclude_defaults=True)
+    data = _prune_empty(data)
+    if isinstance(extra_meta, dict) and extra_meta:
+        # Use a stable, clearly-namespaced key to avoid colliding with real spec fields.
+        data["x_guided_ui"] = extra_meta
+    new_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     # If user renamed the spec, remove the old file (best-effort)
     if new_name != str(old_spec_name) and _is_safe_strategy_name(str(old_spec_name)):
@@ -3709,12 +3719,28 @@ def strategy_spec_edit_guided(request: Request, spec_name: str):
     except Exception:
         return RedirectResponse(url=f"/strategies/spec/{spec_name}?message=Invalid+spec", status_code=303)
 
+    # Prefer the explicit guided sidecar meta when present; however, allow
+    # reopening the guided editor directly from the spec YAML when the
+    # non-standard `x_guided_ui` key is present. This enables round-tripping
+    # when the .guided.json sidecar is missing but the YAML contains the raw
+    # guided UI state (saved at creation time).
     meta = _read_guided_meta(spec.name)
-    if not meta:
+    x_meta = None
+    try:
+        x_meta = spec_data.get("x_guided_ui") if isinstance(spec_data, dict) else None
+    except Exception:
+        x_meta = None
+
+    if not meta and not x_meta:
         return RedirectResponse(
             url=f"/strategies/spec/{spec_name}/form?message=No+guided+edit+data+found+for+this+spec",
             status_code=303,
         )
+
+    # If meta is missing but x_guided_ui exists, synthesize minimal meta so
+    # the handler proceeds and the UI template selection still works.
+    if not meta and isinstance(x_meta, dict):
+        meta = {"template": "builder_v2"}
 
     template = str(meta.get("template") or "custom").strip().lower()
     if template != "builder_v2":
@@ -3739,6 +3765,24 @@ def strategy_spec_edit_guided(request: Request, spec_name: str):
     for k in _GUIDED_META_KEYS:
         if k in meta:
             draft[k] = meta.get(k)
+
+    # If the repo spec embeds raw guided-builder UI state under `x_guided_ui`,
+    # prefer that for Step 4 prefill so the editor can round-trip without a
+    # separate .guided.json sidecar. This allows re-opening specs created by
+    # the guided flow even if the sidecar is missing but the YAML contains
+    # the embedded UI data.
+    try:
+        x_meta = spec_data.get("x_guided_ui") if isinstance(spec_data, dict) else None
+        if isinstance(x_meta, dict):
+            # Only override rule lists if present in x_meta
+            if "context_rules" in x_meta:
+                draft["context_rules"] = x_meta.get("context_rules") or []
+            if "signal_rules" in x_meta:
+                draft["signal_rules"] = x_meta.get("signal_rules") or []
+            if "trigger_rules" in x_meta:
+                draft["trigger_rules"] = x_meta.get("trigger_rules") or []
+    except Exception:
+        pass
 
     # Apply spec fields (source of truth)
     try:
@@ -5702,6 +5746,30 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
         signal_rules = _parse_rules_json("signal_rules_json")
         extra_trigger_rules = _parse_rules_json("trigger_rules_json")
 
+        # Normalize per-rule `side` values to a known set {'both','long','short'}
+        def _normalize_rule_side_list(lst: list[dict[str, Any]] | None) -> None:
+            if not isinstance(lst, list):
+                return
+            for r in lst:
+                try:
+                    if not isinstance(r, dict):
+                        continue
+                    side_val = str(r.get("side") or "both").strip().lower()
+                    if side_val not in {"both", "long", "short"}:
+                        side_val = "both"
+                    r["side"] = side_val
+                except Exception:
+                    # Be tolerant of malformed entries; default to both.
+                    try:
+                        if isinstance(r, dict):
+                            r["side"] = "both"
+                    except Exception:
+                        pass
+
+        _normalize_rule_side_list(context_rules)
+        _normalize_rule_side_list(signal_rules)
+        _normalize_rule_side_list(extra_trigger_rules)
+
         # Debug: dump parsed rule objects for diagnostics
         try:
             import json
@@ -6904,7 +6972,15 @@ async def create_strategy_guided_run(
         old_spec_name = ""
 
     try:
-        repo_spec = _write_validated_spec_to_repo(spec=spec, old_spec_name=old_spec_name)
+        # Embed raw guided-rule objects into the saved spec YAML so the
+        # generated repo spec contains the original `context_rules` /
+        # `signal_rules` / `trigger_rules` for later round-tripping.
+        extra = {
+            "context_rules": draft.get("context_rules") if isinstance(draft.get("context_rules"), list) else [],
+            "signal_rules": draft.get("signal_rules") if isinstance(draft.get("signal_rules"), list) else [],
+            "trigger_rules": draft.get("trigger_rules") if isinstance(draft.get("trigger_rules"), list) else [],
+        }
+        repo_spec = _write_validated_spec_to_repo(spec=spec, old_spec_name=old_spec_name, extra_meta=extra)
     except ValueError as e:
         import urllib.parse
 
@@ -6950,8 +7026,14 @@ async def create_strategy_guided_run(
     import yaml
 
     # Write spec to the run bundle (repo spec already persisted above).
+    # Read the repo spec we just wrote (so it includes any embedded UI metadata)
+    # and copy that exact YAML into the run bundle.
     bundle_spec = bundle.dir / "spec.yml"
-    bundle_spec.write_text(_spec_to_yaml_compact(spec))
+    try:
+        repo_yaml = repo_spec.read_text(encoding="utf-8", errors="replace") if repo_spec is not None else _spec_to_yaml_compact(spec)
+    except Exception:
+        repo_yaml = _spec_to_yaml_compact(spec)
+    bundle_spec.write_text(repo_yaml, encoding="utf-8")
 
     # Persist UI metadata so users can re-open the strategy using the same guided wizard later.
     _write_guided_meta(spec_name=str(spec.name), draft=draft)

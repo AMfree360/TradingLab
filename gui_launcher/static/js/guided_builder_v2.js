@@ -4,6 +4,13 @@
    - Keeps volume features behind FEATURE_FLAG.volume (not rendered)
 */
 (function () {
+  // If a richer/full renderer is preferred (e.g. reopening a spec with
+  // detailed `x_guided_ui`), skip this lightweight/clean-rewrite module to
+  // avoid it overwriting per-type controls. The full Phase-4 renderer
+  // appears earlier in the file and will run instead.
+  try {
+    if (window && window.guidedBuilderV2PreferFullRenderer) return;
+  } catch (e) {}
   const FEATURE_FLAG = { volume: true };
   // Runtime debug gate: set `window.__GUIDED_V2_DEBUG = true` in the console
   // or via test harness to enable debug persistence (localStorage / window globals).
@@ -255,7 +262,7 @@
               if (p.type === 'number') { const n = Number(v); rule[k] = Number.isFinite(n) ? n : v; } else { rule[k] = v; }
             } catch (ee) { /* ignore per-param errors */ }
           }
-          const sideEl = r.querySelector('.rule-side') || r.querySelector('[data-side]') || r.querySelector('select[name="side"]'); if (sideEl && sideEl.value) rule.side = String(sideEl.value).trim().toLowerCase();
+          const sideEl = r.querySelector('.rule-side') || r.querySelector('[data-side]') || r.querySelector('[data-field="side"]') || r.querySelector('select[name="side"]'); if (sideEl && sideEl.value) rule.side = String(sideEl.value).trim().toLowerCase();
           out.push(rule);
         } catch (e) { /* per-row best-effort */ }
       }
@@ -360,6 +367,8 @@
     // per-rule side selector (both | long | short) for all sections
     const sideLabel = el('label', { class: 'rule-side-label', text: 'Side: ' });
     const sideSel = el('select', { class: 'rule-side' });
+    sideSel.title = 'Apply rule to both (default), long-only, or short-only.';
+    sideSel.setAttribute('aria-label', 'Rule side selector');
     sideSel.appendChild(el('option', { value: 'both', text: 'both' }));
     sideSel.appendChild(el('option', { value: 'long', text: 'long' }));
     sideSel.appendChild(el('option', { value: 'short', text: 'short' }));
@@ -763,7 +772,11 @@
     // must ensure the form submit handler syncs hidden JSON inputs/draft
     // id. Attach a minimal submit handler and return early.
     const advancedPreviewBody = document.getElementById('effective-preview-body');
-    if (advancedPreviewBody) {
+    // If the advanced preview body exists we normally prefer the advanced
+    // renderer and skip the full wiring. However, allow an override via
+    // `window.guidedBuilderV2PreferFullRenderer` so reopen flows that carry
+    // detailed UI metadata can force the full renderer to initialize.
+    if (advancedPreviewBody && !window.guidedBuilderV2PreferFullRenderer) {
       // ensure hidden inputs exist
       ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json');
       // minimal submit sync to preserve draft/hidden JSON when submitting from advanced UI
@@ -881,11 +894,15 @@
             try { HTMLFormElement.prototype.submit.call(form); } catch (e) { console.error('form.submit failed', e); }
             setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
           });
-          submitBtn.dataset.guidedV2ClickWired = '1';
+              submitBtn.dataset.guidedV2ClickWired = '1';
+            }
+          } catch (e) { /* ignore */ }
+          // NOTE: do not return here — allow the full renderer wiring to run as
+          // well so the page initializes the richer per-type renderer while
+          // retaining the minimal submit-sync handlers above. This prevents
+          // lost-settings bugs when the minimal path fails to hydrate complex
+          // rule parameters before submit.
         }
-      } catch (e) { /* ignore */ }
-      return;
-    }
 
     // Capture-phase submit handler: ensure we serialize DOM -> hidden inputs
     try {
@@ -1033,327 +1050,6 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 
-})();
-/* Guided Builder v2 — Clean rewrite (Phase 4 starter)
-   Self-contained module: reads the Step 4 form, renders simple rule rows,
-   two-way syncs hidden JSON inputs: context_rules_json, signal_rules_json,
-   trigger_rules_json. Keeps implementation minimal and robust for iterative
-   expansion (per-type parameter blocks come next).
-*/
-(function () {
-  const contextTypes = [
-    ['price_vs_ma', 'Trend: Price vs MA'],
-    ['ma_cross_state', 'Trend: MA state (fast vs slow)'],
-    ['atr_pct', 'Volatility: ATR% filter'],
-    ['structure_breakout_state', 'Structure: Breakout state'],
-    ['ma_spread_pct', 'Trend strength: MA spread %'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  const signalTypes = [
-    ['ma_cross', 'MA cross (fast vs slow)'],
-    ['rsi_threshold', 'RSI threshold'],
-    ['rsi_cross_back', 'RSI cross back'],
-    ['donchian_breakout', 'Donchian breakout/breakdown'],
-    ['new_high_low_breakout', 'New high/low breakout'],
-    ['pullback_to_ma', 'Pullback to MA'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  const triggerTypes = [
-    ['pin_bar', 'Pin bar'],
-    ['inside_bar_breakout', 'Inside bar breakout'],
-    ['engulfing', 'Engulfing'],
-    ['ma_reclaim', 'MA reclaim'],
-    ['prior_bar_break', 'Break prior bar high/low'],
-    ['donchian_breakout', 'Donchian breakout/breakdown'],
-    ['range_breakout', 'Range breakout'],
-    ['wide_range_candle', 'Wide-range candle (vs ATR)'],
-    ['custom', 'Custom (DSL)']
-  ];
-
-  function el(tag, attrs) {
-    const node = document.createElement(tag);
-    if (!attrs) return node;
-    for (const k of Object.keys(attrs)) {
-      if (k === 'text') node.textContent = attrs[k];
-      else if (k === 'html') node.innerHTML = attrs[k];
-      else if (k === 'class') node.className = attrs[k];
-      else node.setAttribute(k, String(attrs[k]));
-    }
-    return node;
-  }
-
-  function ensureHidden(form, id) {
-    let elHidden = form.querySelector('#' + id);
-    if (!elHidden) {
-      elHidden = el('input', { type: 'hidden', id: id, name: id });
-      elHidden.value = '[]';
-      form.appendChild(elHidden);
-    }
-    return elHidden;
-  }
-
-  function parseJsonSafe(txt) {
-    try { const p = JSON.parse(String(txt || '[]')); return Array.isArray(p) ? p : []; } catch (e) { return []; }
-  }
-
-  function serializeRules(container) {
-    const out = [];
-    if (!container) return out;
-    const rows = Array.from(container.querySelectorAll('.rule-row'));
-    for (const r of rows) {
-      const type = (r.querySelector('.rule-type') || {}).value || '';
-      if (!type) continue;
-      const rule = { type: String(type) };
-      const tfEl = r.querySelector('.rule-tf');
-      if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = String(tfEl.value);
-      const validEl = r.querySelector('.rule-valid');
-      if (validEl && validEl.value !== '') {
-        const n = Number(validEl.value);
-        if (Number.isFinite(n)) rule.valid_for_bars = n;
-      }
-      const sideEl = r.querySelector('.rule-side');
-      if (sideEl && sideEl.value) rule.side = String(sideEl.value).trim().toLowerCase();
-      const customEl = r.querySelector('.rule-custom');
-      if (customEl && customEl.value && customEl.value.trim() !== '') rule.custom = customEl.value.trim();
-      out.push(rule);
-    }
-    return out;
-  }
-
-  function syncHidden(form, ctxContainer, sigContainer, trgContainer) {
-    try {
-      const ctxHidden = ensureHidden(form, 'context_rules_json');
-      const sigHidden = ensureHidden(form, 'signal_rules_json');
-      const trgHidden = ensureHidden(form, 'trigger_rules_json');
-      ctxHidden.value = JSON.stringify(serializeRules(ctxContainer));
-      sigHidden.value = JSON.stringify(serializeRules(sigContainer));
-      trgHidden.value = JSON.stringify(serializeRules(trgContainer));
-    } catch (e) { console.error('syncHidden error', e); }
-  }
-
-  function createRuleRow(section, rule) {
-    const row = el('div', { class: 'rule-row' });
-    const left = el('div', { class: 'rule-left' });
-    const right = el('div', { class: 'rule-right' });
-
-    // type select
-    const sel = el('select', { class: 'rule-type', name: `type` });
-    const types = section === 'context' ? contextTypes : (section === 'signal' ? signalTypes : triggerTypes);
-    for (const [v, label] of types) {
-      const o = el('option', { value: v }); o.textContent = label; sel.appendChild(o);
-    }
-    if (rule && rule.type) sel.value = rule.type;
-
-    left.appendChild(sel);
-
-    // TF select for signal/trigger
-    if (section === 'signal' || section === 'trigger') {
-      const tf = el('select', { class: 'rule-tf', name: 'tf' });
-      tf.appendChild(el('option', { value: 'default', text: 'default' }));
-      tf.appendChild(el('option', { value: '1m', text: '1m' }));
-      tf.appendChild(el('option', { value: '5m', text: '5m' }));
-      tf.appendChild(el('option', { value: '15m', text: '15m' }));
-      if (rule && rule.tf) tf.value = rule.tf;
-      left.appendChild(tf);
-    }
-
-    // side selector for all sections
-    const sideSel = el('select', { class: 'rule-side', name: 'side' });
-    sideSel.appendChild(el('option', { value: 'both', text: 'both' }));
-    sideSel.appendChild(el('option', { value: 'long', text: 'long' }));
-    sideSel.appendChild(el('option', { value: 'short', text: 'short' }));
-    if (rule && rule.side) sideSel.value = String(rule.side);
-    left.appendChild(sideSel);
-
-    // valid_for_bars
-    const valid = el('input', { type: 'number', class: 'rule-valid', name: 'valid_for_bars', min: 1, value: (rule && rule.valid_for_bars) ? String(rule.valid_for_bars) : '' });
-    left.appendChild(valid);
-
-    // parameter area (simple custom DSL textarea for now)
-    const ta = el('textarea', { class: 'rule-custom', name: 'custom', rows: 2 });
-    if (rule && rule.custom) ta.value = rule.custom;
-    right.appendChild(ta);
-
-    // remove button
-    const remove = el('button', { type: 'button', class: 'rule-remove' }); remove.textContent = 'Remove';
-    right.appendChild(remove);
-
-    row.appendChild(left); row.appendChild(right);
-
-    return row;
-  }
-
-  function renderRules(container, rules, section) {
-    if (!container) return;
-    container.innerHTML = '';
-    if (!Array.isArray(rules) || rules.length === 0) return;
-    for (const r of rules) {
-      const row = createRuleRow(section, r);
-      container.appendChild(row);
-    }
-  }
-
-  function wire(container, form, ctxContainer, sigContainer, trgContainer) {
-    // delegate events
-    container.addEventListener('input', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
-    container.addEventListener('change', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
-    container.addEventListener('click', (ev) => {
-      if (!ev.target) return;
-      if (ev.target.classList && ev.target.classList.contains('rule-remove')) {
-        const row = ev.target.closest('.rule-row'); if (row) { row.remove(); syncHidden(form, ctxContainer, sigContainer, trgContainer); }
-      }
-    });
-  }
-
-  function init() {
-    const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
-    if (!form) return;
-
-    // If the advanced guided builder (preview body) is present, prefer its
-    // renderer to avoid duplicate/wrong wiring from this legacy module.
-    // NOTE: do not early-return here — we still need to wire form submit
-    // handlers to ensure hidden JSON inputs and `draft_id` are synced.
-
-    const ctxContainer = document.getElementById('context-rules');
-    const sigContainer = document.getElementById('signal-rules');
-    const trgContainer = document.getElementById('trigger-rules');
-
-    const ctxHidden = ensureHidden(form, 'context_rules_json');
-    const sigHidden = ensureHidden(form, 'signal_rules_json');
-    const trgHidden = ensureHidden(form, 'trigger_rules_json');
-
-    // load initial rules from hidden inputs
-    const ctx = parseJsonSafe(ctxHidden.value);
-    const sig = parseJsonSafe(sigHidden.value);
-    const trg = parseJsonSafe(trgHidden.value);
-
-    renderRules(ctxContainer, ctx, 'context');
-    renderRules(sigContainer, sig, 'signal');
-    renderRules(trgContainer, trg, 'trigger');
-
-    // wire add buttons
-    const addCtx = document.getElementById('add-context');
-    const addSig = document.getElementById('add-signal');
-    const addTrg = document.getElementById('add-trigger');
-
-    if (addCtx && ctxContainer && !addCtx.dataset.guidedV2Wired) {
-      addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-      addCtx.dataset.guidedV2Wired = '1';
-    }
-    if (addSig && sigContainer && !addSig.dataset.guidedV2Wired) {
-      addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-      addSig.dataset.guidedV2Wired = '1';
-    }
-    if (addTrg && trgContainer && !addTrg.dataset.guidedV2Wired) {
-      addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); syncHidden(form, ctxContainer, sigContainer, trgContainer); });
-      addTrg.dataset.guidedV2Wired = '1';
-    }
-
-    // delegate wiring for edits/removes
-    wire(ctxContainer || document, form, ctxContainer, sigContainer, trgContainer);
-    wire(sigContainer || document, form, ctxContainer, sigContainer, trgContainer);
-    wire(trgContainer || document, form, ctxContainer, sigContainer, trgContainer);
-
-    // ensure we sync initially
-    syncHidden(form, ctxContainer, sigContainer, trgContainer);
-
-    // on submit, make sure hidden inputs reflect current state
-    form.addEventListener('submit', () => syncHidden(form, ctxContainer, sigContainer, trgContainer));
-
-    // ensure hidden JSONs are synced as early as possible when user presses Review
-    try {
-      const submitBtn = form.querySelector('button[type="submit"]');
-      if (submitBtn && !submitBtn.dataset.guidedV2Mousedown) {
-        submitBtn.addEventListener('mousedown', (ev) => {
-          try {
-            // force serialize current DOM rows into hidden inputs
-            syncHidden(form, ctxContainer, sigContainer, trgContainer);
-            // also log for debugging
-            try { console.log('[guided-debug] mousedown syncHidden ->', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
-          } catch (e) { /* best-effort */ }
-        });
-        submitBtn.dataset.guidedV2Mousedown = '1';
-      }
-    } catch (e) { /* ignore */ }
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-
-})();
-/* Guided Builder v2 — Modular entrypoint (clean rewrite start)
-   This file replaces the previous monolithic script. It bootstraps the smaller
-   modules added in the rewrite: model, state, and DOM bindings. Full rule-row
-   renderer will be implemented in Phase 4; this entrypoint keeps the page
-   functional and free of syntax/runtime parse errors.
-*/
-(function () {
-  function safeWarn(msg) { try { console.warn(msg); } catch (e) {} }
-
-  // Ensure model and state objects exist (modules created in earlier phases)
-  if (!window.GuidedBuilderV2Model) {
-    safeWarn('GuidedBuilderV2Model missing; guided builder limited functionality');
-    window.GuidedBuilderV2Model = {
-      defaults: () => ({ _version: 1, context_rules: [], signal_rules: [], trigger_rules: [] })
-    };
-  }
-
-  if (!window.GuidedBuilderV2State) {
-    safeWarn('GuidedBuilderV2State missing; creating minimal fallback');
-    window.GuidedBuilderV2State = (function () {
-      let _raw = GuidedBuilderV2Model.defaults();
-      const subs = [];
-      return {
-        load: (x) => { _raw = Object.assign({}, GuidedBuilderV2Model.defaults(), x || {}); subs.forEach(s=>s(_raw)); },
-        get: (k) => _raw[k],
-        set: (k,v) => { _raw[k]=v; subs.forEach(s=>s(_raw)); },
-        raw: () => _raw,
-        subscribe: (cb) => { subs.push(cb); return () => { const i=subs.indexOf(cb); if(i>=0) subs.splice(i,1); }; },
-        flush: () => {},
-      };
-    })();
-  }
-
-  // If DOM binder exists, it will initialize itself on DOMContentLoaded.
-  if (!window.GuidedBuilderV2DomInitialized) {
-    // Minimal init that ensures hidden rule JSONs are present and consistent
-    document.addEventListener('DOMContentLoaded', function () {
-      try {
-        const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
-        if (!form) return;
-
-        // Ensure hidden inputs exist so server endpoints receive payloads
-        const ensureHidden = (id) => {
-          let el = form.querySelector('#' + id);
-          if (!el) {
-            el = document.createElement('input');
-            el.type = 'hidden';
-            el.id = id;
-            el.name = id;
-            el.value = '[]';
-            form.appendChild(el);
-          }
-        };
-        ensureHidden('context_rules_json');
-        ensureHidden('signal_rules_json');
-        ensureHidden('trigger_rules_json');
-
-        // If the DOM bindings module is present it will subscribe and populate
-        if (window.GuidedBuilderV2State && window.GuidedBuilderV2Model) {
-          try {
-            // attempt to load current form values into state via DOM binder
-            if (window.GuidedBuilderV2Dom) {
-              // Dom module exposes init() if present; otherwise it's self-initializing
-              if (typeof window.GuidedBuilderV2Dom.init === 'function') window.GuidedBuilderV2Dom.init();
-            }
-          } catch (e) { console.error('guided_builder_v2 dom init error', e); }
-        }
-
-      } catch (e) { console.error('guided_builder_v2 init error', e); }
-    });
-    window.GuidedBuilderV2DomInitialized = true;
-  }
 })();
     (function () {
       const form = document.querySelector('form[action="/create-strategy-guided/step4"]');
@@ -1561,6 +1257,18 @@
         });
 
         left.appendChild(typeSel);
+        // per-rule side selector (both | long | short)
+        const sideSel = el('select', { 'data-field': 'side', style: 'margin-left:10px;' });
+        sideSel.title = 'Apply rule to both (default), long-only, or short-only.';
+        sideSel.setAttribute('aria-label', 'Rule side selector');
+        function addSideOpt(value, label) {
+          const o = el('option'); o.value = value; o.textContent = label; sideSel.appendChild(o);
+        }
+        addSideOpt('both', 'Side: Both');
+        addSideOpt('long', 'Side: Long');
+        addSideOpt('short', 'Side: Short');
+        sideSel.value = (rule && rule.side) ? String(rule.side) : 'both';
+        left.appendChild(sideSel);
         if (section === 'signal' || section === 'trigger') {
           left.appendChild(tfSel);
           left.appendChild(validWrap);
@@ -1903,6 +1611,11 @@
             try { schedule(); } catch (e) {}
           });
 
+          // wire side selector to update preview/state
+          try {
+            sideSel.addEventListener('change', () => { try { syncHidden(); schedule(); } catch (e) {} });
+          } catch (e) {}
+
           // wire inner controls to update preview/state
           for (const inp of fields.querySelectorAll('[data-field]')) {
             inp.addEventListener('input', () => { try { syncHidden(); schedule(); } catch (e) {} });
@@ -1927,6 +1640,9 @@
 
           const tfEl = row.querySelector('[data-field="tf"]');
           if (tfEl && String(tfEl.value || '') !== 'default') rule.tf = String(tfEl.value || '');
+
+          const sideEl = row.querySelector('[data-field="side"]');
+          if (sideEl && sideEl.value) rule.side = String(sideEl.value || 'both').trim();
 
           const validEl = row.querySelector('[data-field="valid_for_bars"]');
           if (validEl) {

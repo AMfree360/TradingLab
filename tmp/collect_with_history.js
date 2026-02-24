@@ -17,8 +17,12 @@ if (process.argv.length < 3) {
     try {
       // Ensure debug gate is disabled by default for normal harness runs.
       // Tests that need debug persistence should explicitly enable it.
-      window.__GUIDED_V2_DEBUG = false;
-      // Do not override the beacon URL here; let the client use its default.
+        // Enable debug gate for harness runs so client-side debug persistence
+        // (write history and DOM snapshots) is active. Also point client debug
+        // beacons to the server `/debug/beacon` endpoint so the server can
+        // persist them to disk.
+        window.__GUIDED_V2_DEBUG = true;
+        window.__guided_v2_debug_beacon_url = '/debug/beacon';
     } catch (e) {}
   });
 

@@ -123,6 +123,11 @@ The guided wizard is the “tight pipeline” path: it generates a validated res
     - Backtest costs: optional overrides for `commissions` and `slippage_ticks`
   - If commission/slippage overrides are left disabled, TradingLab uses market profile defaults from `config/market_profiles.yml`.
 
+- Builder v2 Step 4 (per-rule direction selector):
+  - Each rule row in Step 4 now exposes a `side` selector with values `both|long|short`.
+  - The selected `side` is serialized with the rule (rule object key `side`) and persisted in the spec sidecar under `x_guided_ui` for round-trip edit/read.
+  - The lightweight/legacy `builder_v3` code was removed; the full Builder v2 renderer remains the single source of truth for Step 4.
+
 ### Quick verification checklist (GUI + YAML + CLI)
 
 Use this after making changes to builder/compiler/engine behavior.
@@ -553,3 +558,11 @@ If `trading_sessions_enabled: false`, the `trading_sessions` definitions are ign
 - If a phase aborts due to dataset lock mismatch:
   - The dataset slice identity changed (file contents or slice boundaries).
   - Treat it as a stop-the-line event; decide whether this is a legitimate new dataset version or an accidental mutation.
+
+## Debugging guided builder (2026-02-23)
+
+- Summary: Investigated intermittent empty-array submissions from Builder v2 Step 4. Implemented deterministic client final-write helpers, stamped hidden-input write history, and a Puppeteer harness to capture outgoing requests and DOM snapshots. Added a gated server-side `/debug/beacon` endpoint and `gui_debug` config to persist incoming beacon payloads for authoritative post-mortems.
+- Artifacts: persisted captures and harness logs under `tmp/guided_capture/` (includes `debug_beacon_*.log`, `server_received_*.log`, and puppeteer run logs).
+- Key observation: Some requests returned `422 Unprocessable Entity` because FastAPI validates `Form(...)` parameters before endpoint code runs; attempting `await request.body()` after that will report "Stream consumed". This is expected behavior.
+- Decision: Keep normal form handler intact. For debug evidence use the dedicated `/debug/beacon` endpoint or enable a pre-parse middleware to persist raw bodies when `GUIDED_V2_DEBUG` is enabled. The dedicated beacon endpoint is lower-risk for debug runs.
+- Next steps: optionally run the harness in batch to collect more persisted beacons, or add the request-body middleware when authoritative raw-body capture is required in CI.

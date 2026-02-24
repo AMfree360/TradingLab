@@ -26,6 +26,21 @@
 ### Current status
 - Test suite: `116 passed`.
 
+  ## Snapshot (as of 2026-02-23)
+
+  ### What shipped / changed today
+  - Guided Strategy Builder v2 (Step 4) debugging and observability:
+    - Added deterministic final-write helpers in the renderer to ensure DOM/state serialization before submit.
+    - Instrumented client to stamp writes and capture DOM snapshots and write history for post-mortem analysis.
+    - Added a Puppeteer harness (`tmp/collect_with_history.js`) to capture page console, outbound POST bodies, and persist client artifacts to `tmp/guided_capture/`.
+    - Server-side: added gated `/debug/beacon` and persisted incoming beacon/request bodies to `tmp/guided_capture/` when `GUIDED_V2_DEBUG` + `GUIDED_V2_DEBUG_PERSIST` enabled.
+    - Collected authoritative server-side `server_received_*.log` files showing populated form-encoded rule JSONs; confirmed mismatch source was not client serialization in captured cases.
+
+  ### Current status / notes
+  - Observed occasional "raw-request read failed Stream consumed" logs when handler attempted to re-read the body after FastAPI parsed form data; this is expected behavior. For reliable raw-body persistence use either the gated `/debug/beacon` or add a pre-parse middleware to capture the body before FastAPI consumes it.
+  - Artifacts and captures are in `tmp/guided_capture/` for follow-up analysis.
+
+
 ## Snapshot (as of 2026-02-11)
 
 ### What shipped / changed today
@@ -41,6 +56,22 @@
   - Added UI controls to enable/disable context invalidation handling and pick `immediate` vs `tighten_stop`.
   - Ensured the setting is serialized into the generated spec on both Review preview and Create+Compile paths.
   - Guided edit/reopen round-trips the new fields via the `.guided.json` sidecar metadata and YAML hydration.
+
+## Snapshot (as of 2026-02-24)
+
+### What shipped / changed today
+- Builder v2 Step 4: per-rule `side` selector
+  - Added a `side` selector (`both|long|short`) on each rule row in Step 4.
+  - `side` is persisted with the rule object and saved in the spec sidecar under the `x_guided_ui` key for reliable reopen/edit round-trip.
+  - The full Builder v2 renderer was kept as the preferred renderer and the legacy `builder_v3`/lightweight fallback was removed to avoid renderer flip/UX regressions.
+
+- Tests & harness
+  - Added Puppeteer smoke and round-trip E2E scripts to validate the Step 4 UI, persistence, and reopen semantics.
+  - Updated the Node test harness to skip legacy `builder_v3` component checks; Node harness prints `OK` locally.
+
+### Status
+- All tests ran green after cleanup: `124 passed, 7 skipped` (local `pytest -q`).
+
 
 - GUI Launcher usability:
   - Added pagination for Strategies and Runs pages (`page` + `per_page` query params).

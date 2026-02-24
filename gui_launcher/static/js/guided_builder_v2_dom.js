@@ -54,17 +54,18 @@ console.warn('guided_builder_v2_dom.js is archived; use guided_builder_v2.js');
     const rows = Array.from(container.querySelectorAll('.rule-row'));
     for (const r of rows) {
       try {
-        // be tolerant: support multiple renderer variants
-        const typeEl = r.querySelector('.rule-type') || r.querySelector('[data-type]') || r.querySelector('select[name="type"]') || r.querySelector('input[data-type]') || r.querySelector('select.rule-type');
-        const type = typeEl ? (typeEl.value || typeEl.textContent || '') : '';
-        if (!type) continue;
-        const rule = { type };
+        // be tolerant: support multiple renderer variants (including advanced markup using data-field)
+        const typeEl = r.querySelector('.rule-type') || r.querySelector('[data-type]') || r.querySelector('[data-field="type"]') || r.querySelector('select[name="type"]') || r.querySelector('input[data-type]') || r.querySelector('select.rule-type');
+        const type = typeEl ? (typeEl.value || typeEl.getAttribute('data-field') || typeEl.textContent || '') : '';
+        // Allow rows to be serialized even if the `type` value is empty
+        const rule = { type: String(type || '') };
         const tfEl = r.querySelector('.rule-tf') || r.querySelector('[data-tf]') || r.querySelector('select[name="tf"]'); if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = tfEl.value;
         const validEl = r.querySelector('.rule-valid') || r.querySelector('[data-valid]') || r.querySelector('input[name="valid_for_bars"]'); if (validEl && validEl.value !== '') { const n = Number(validEl.value); if (Number.isFinite(n)) rule.valid_for_bars = n; }
-        // collect simple params (inputs/selects/textareas with data-key)
-        const params = r.querySelectorAll('.param');
+        // collect simple params: support both legacy `.param` with `data-key` and
+        // advanced markup using `data-field` on inputs/selects/textareas.
+        const params = r.querySelectorAll('.param, [data-field]');
         for (const p of Array.from(params)) {
-          const k = p.getAttribute && p.getAttribute('data-key');
+          const k = (p.getAttribute && (p.getAttribute('data-key') || p.getAttribute('data-field')));
           if (!k) continue;
           const v = p.value;
           if (p.type === 'number') { const n = Number(v); rule[k] = Number.isFinite(n) ? n : v; } else { rule[k] = v; }
@@ -119,6 +120,11 @@ console.warn('guided_builder_v2_dom.js is archived; use guided_builder_v2.js');
       applying = true;
       try { applyStateToForm(form, s, modelDefaults); } catch (e) { console.error(e); }
       applying = false;
+      try {
+        if (form && form.dataset && form.dataset.guidedV2Submitting) {
+          try { if (window.__guided_v2_invoke_final_pre_write) { window.__guided_v2_invoke_final_pre_write(form); } } catch (e) {}
+        }
+      } catch (e) {}
     });
 
     // on user input, update state
@@ -246,6 +252,7 @@ console.warn('guided_builder_v2_dom.js is archived; use guided_builder_v2.js');
               if (ctxHidden) ctxHidden.value = JSON.stringify(ctxSer);
               if (sigHidden) sigHidden.value = JSON.stringify(sigSer);
               if (trgHidden) trgHidden.value = JSON.stringify(trgSer);
+              try { if (window.__guided_v2_invoke_final_pre_write) { try { window.__guided_v2_invoke_final_pre_write(form); } catch (e) {} } } catch (e) {}
             } catch (e) { console.error('submit-dom-serialize inner failed', e); }
           }
 
@@ -279,6 +286,7 @@ console.warn('guided_builder_v2_dom.js is archived; use guided_builder_v2.js');
         if (ctxHidden) ctxHidden.value = JSON.stringify(serializeRulesFromDOMMinimal(ctxContainer) || []);
         if (sigHidden) sigHidden.value = JSON.stringify(serializeRulesFromDOMMinimal(sigContainer) || []);
         if (trgHidden) trgHidden.value = JSON.stringify(serializeRulesFromDOMMinimal(trgContainer) || []);
+        try { if (window.__guided_v2_invoke_final_pre_write) { try { window.__guided_v2_invoke_final_pre_write(form); } catch (e) {} } } catch (e) {}
       } catch (e) { console.error('submit-dom-serialize failed', e); }
 
       // Defensive check: if LONG enabled but no entry conditions provided, prevent submit and show message

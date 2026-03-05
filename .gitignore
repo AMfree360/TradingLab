@@ -45,6 +45,10 @@ data/manifests/*
 !data/processed/.gitkeep
 !data/manifests/.gitkeep
 
+# Generated exports (local artifacts)
+data/exports/*
+!data/exports/.gitkeep
+
 # Reports
 reports/*
 !reports/.gitkeep
@@ -103,6 +107,10 @@ config/data_splits.yml
 
 # Local-only docs/specs (keep local)
 docs/dev/advanced-builder-market-aware-defaults.md
+
+# Local notes / reference files
+SESSION_NOTES_APPEND_*.md
+TitanMaster_Apex.cs
 
 # Local-only experimental tests (keep local)
 tests/test_advanced_builder_defaults.py

@@ -24,6 +24,7 @@ class LiveTradingEngine:
         strategy: StrategyBase,
         adapter: BinanceFuturesAdapter,
         market_spec: MarketSpec,
+        market_specs_by_symbol: Optional[Dict[str, MarketSpec]] = None,
         initial_capital: float = 10000.0,
         max_daily_loss_pct: float = 5.0,
         max_drawdown_pct: float = 15.0
@@ -42,6 +43,9 @@ class LiveTradingEngine:
         self.strategy = strategy
         self.adapter = adapter
         self.market_spec = market_spec
+        self.market_specs_by_symbol: Dict[str, MarketSpec] = dict(market_specs_by_symbol or {})
+        if self.market_spec is not None and getattr(self.market_spec, 'symbol', None):
+            self.market_specs_by_symbol.setdefault(self.market_spec.symbol, self.market_spec)
         self.initial_capital = initial_capital
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_drawdown_pct = max_drawdown_pct
@@ -58,6 +62,44 @@ class LiveTradingEngine:
         self.daily_pnl = 0.0
         self.daily_start_balance = initial_capital
         self.peak_equity = initial_capital
+
+        # Optional end-of-day flattening (parity with backtest execution config)
+        exec_cfg = getattr(strategy.config, 'execution', None)
+        self.flatten_enabled = getattr(exec_cfg, 'flatten_enabled', True) if exec_cfg else True
+        self.flatten_time_str = getattr(exec_cfg, 'flatten_time', '21:30') if self.flatten_enabled else None
+        self.stop_signal_search_minutes_before = getattr(exec_cfg, 'stop_signal_search_minutes_before', None) if exec_cfg else None
+        self._flatten_minutes: Optional[int] = None
+        self._stop_signal_search_minutes: Optional[int] = None
+        self._flatten_closed_date: Optional[pd.Timestamp] = None
+
+        if self.flatten_enabled and self.flatten_time_str:
+            try:
+                hours, mins = str(self.flatten_time_str).split(":")
+                self._flatten_minutes = int(hours) * 60 + int(mins)
+
+                if self.stop_signal_search_minutes_before is not None:
+                    self._stop_signal_search_minutes = self._flatten_minutes - int(self.stop_signal_search_minutes_before)
+                    if self._stop_signal_search_minutes < 0:
+                        self._stop_signal_search_minutes += 24 * 60
+            except Exception:
+                self._flatten_minutes = None
+                self._stop_signal_search_minutes = None
+
+        # Track realized P&L after costs per day for config-driven daily loss caps.
+        self._realized_pnl_after_costs_per_day: Dict[pd.Timestamp, float] = {}
+
+        # Track day-start equity baseline (used when sizing_mode != account_size).
+        self._day_start_equity_by_day: Dict[pd.Timestamp, float] = {}
+        self._current_day_key: Optional[pd.Timestamp] = None
+
+        # Track entry details for deterministic realized P&L in CLOSE signals.
+        self._entry_side_by_symbol: Dict[str, str] = {}
+        self._entry_price_by_symbol: Dict[str, float] = {}
+        self._entry_qty_by_symbol: Dict[str, float] = {}
+
+        # Track entries per day for parity with backtest trade limits.
+        # Keyed by UTC-normalized day.
+        self._entries_per_day: Dict[pd.Timestamp, int] = {}
 
         # Market data cache (optional). Used for ATR stop fallback.
         self.recent_bars: Optional[pd.DataFrame] = None
@@ -84,6 +126,12 @@ class LiveTradingEngine:
         # Update account with unrealized P&L
         total_unrealized = sum(pos.unrealized_pnl for pos in self.active_positions.values())
         # Note: In live trading, we track this separately from account equity
+
+    def _get_market_spec_for_symbol(self, symbol: str) -> MarketSpec:
+        spec = self.market_specs_by_symbol.get(symbol)
+        if spec is not None:
+            return spec
+        return self.market_spec
         
     def check_safety_limits(self) -> Tuple[bool, Optional[str]]:
         """Check if safety limits are exceeded.
@@ -94,10 +142,19 @@ class LiveTradingEngine:
         balance = self.adapter.get_account_balance()
         current_equity = balance.total_balance
         
-        # Check daily loss
-        daily_loss_pct = ((self.daily_start_balance - current_equity) / self.daily_start_balance) * 100
-        if daily_loss_pct >= self.max_daily_loss_pct:
-            return True, f"Daily loss limit exceeded: {daily_loss_pct:.2f}%"
+        # Check daily loss (config override if provided)
+        trade_limits_cfg = getattr(self.strategy.config, 'trade_limits', None)
+        effective_daily_loss_pct = getattr(trade_limits_cfg, 'max_daily_loss_pct', None) if trade_limits_cfg else None
+        if effective_daily_loss_pct is None:
+            effective_daily_loss_pct = self.max_daily_loss_pct
+
+        if effective_daily_loss_pct is not None:
+            try:
+                daily_loss_pct = ((self.daily_start_balance - current_equity) / self.daily_start_balance) * 100
+                if daily_loss_pct >= float(effective_daily_loss_pct):
+                    return True, f"Daily loss limit exceeded: {daily_loss_pct:.2f}%"
+            except Exception:
+                pass
         
         # Check drawdown
         if current_equity > self.peak_equity:
@@ -129,14 +186,89 @@ class LiveTradingEngine:
         
         # Update positions
         self.update_positions()
+
+        # Optional EOD flattening (safe no-op if disabled / unconfigured)
+        try:
+            self._check_flatten_time(current_time=current_time, current_price=float(current_price))
+        except Exception:
+            pass
         
         # Handle different actions
         if action == 'CLOSE':
-            self._close_all_positions()
+            self._close_all_positions(current_price=current_price, current_time=current_time)
         elif action in ['BUY', 'SELL']:
             self._process_entry_signal(signal, current_price, current_time)
         elif action == 'UPDATE_STOP':
             self._update_stop_loss(signal, current_price)
+
+    @staticmethod
+    def _day_key(ts: pd.Timestamp) -> pd.Timestamp:
+        return pd.Timestamp(ts).normalize()
+
+    def _ensure_day_initialized(self, ts: pd.Timestamp) -> None:
+        day_key = self._day_key(ts)
+        self._current_day_key = day_key
+        if day_key not in self._day_start_equity_by_day:
+            try:
+                bal = self.adapter.get_account_balance()
+                self._day_start_equity_by_day[day_key] = float(getattr(bal, 'total_balance', self.initial_capital))
+            except Exception:
+                self._day_start_equity_by_day[day_key] = float(self.initial_capital)
+
+    def _get_day_base_equity_for_limits(self, ts: pd.Timestamp) -> float:
+        risk_cfg = getattr(self.strategy.config, 'risk', None)
+        sizing_mode = getattr(risk_cfg, 'sizing_mode', 'account_size') if risk_cfg else 'account_size'
+        if sizing_mode == 'account_size':
+            acct_size = getattr(risk_cfg, 'account_size', None) if risk_cfg else None
+            return float(acct_size) if acct_size is not None else float(self.initial_capital)
+
+        day_key = self._day_key(ts)
+        base = self._day_start_equity_by_day.get(day_key)
+        if base is None:
+            self._ensure_day_initialized(ts)
+            base = self._day_start_equity_by_day.get(day_key, float(self.initial_capital))
+        return float(base)
+
+    def _daily_loss_limit_reached(self, ts: pd.Timestamp) -> bool:
+        trade_limits_cfg = getattr(self.strategy.config, 'trade_limits', None)
+        max_daily_loss_pct = getattr(trade_limits_cfg, 'max_daily_loss_pct', None) if trade_limits_cfg else None
+        if max_daily_loss_pct is None:
+            return False
+        try:
+            pct = float(max_daily_loss_pct)
+        except (TypeError, ValueError):
+            return False
+        if pct <= 0:
+            return False
+
+        day_key = self._day_key(ts)
+        realized = float(self._realized_pnl_after_costs_per_day.get(day_key, 0.0))
+        base = self._get_day_base_equity_for_limits(ts)
+        limit_amount = base * (pct / 100.0)
+        return realized <= -limit_amount
+
+    def _should_stop_signal_search(self, current_time: pd.Timestamp) -> bool:
+        """Match BacktestEngine semantics: stop searching when minutes >= configured stop time."""
+        if self._stop_signal_search_minutes is None:
+            return False
+        t = pd.Timestamp(current_time)
+        minutes = int(t.hour) * 60 + int(t.minute)
+        return minutes >= int(self._stop_signal_search_minutes)
+
+    def _check_flatten_time(self, *, current_time: pd.Timestamp, current_price: float) -> None:
+        """Flatten all open positions at configured end-of-day time (best-effort)."""
+        if not getattr(self, 'flatten_enabled', False) or self._flatten_minutes is None:
+            return
+
+        t = pd.Timestamp(current_time)
+        current_date = t.normalize()
+        if self._flatten_closed_date is not None and self._flatten_closed_date == current_date:
+            return
+
+        minutes = int(t.hour) * 60 + int(t.minute)
+        if minutes >= int(self._flatten_minutes):
+            self._close_all_positions(current_price=float(current_price), current_time=t)
+            self._flatten_closed_date = current_date
 
     def update_recent_bars(self, bars: pd.DataFrame) -> None:
         """Update cached bars for ATR stop fallback.
@@ -156,19 +288,51 @@ class LiveTradingEngine:
     ):
         """Process an entry signal."""
         action = signal.get('action')  # 'BUY' or 'SELL'
-        quantity = signal.get('quantity')
         stop_price = signal.get('stop_price')
         target_price = signal.get('target_price')
-        
-        if not quantity or quantity <= 0:
-            logger.warning(f"Invalid quantity in signal: {quantity}")
-            return
+
+        quantity = signal.get('quantity')
         
         # Check if we already have a position
         if self.symbol in self.active_positions:
             logger.info(f"Position already exists for {self.symbol}, skipping entry")
             self.trades_skipped += 1
             return
+
+        # Apply deterministic time-based trade gating (session/blackout windows, etc).
+        if not self._is_trade_allowed_at(current_time):
+            logger.info("Trade filtered out by trade_filters; skipping entry")
+            self.trades_skipped += 1
+            return
+
+        # Stop searching for new entries X minutes before flatten time (if configured).
+        if self._should_stop_signal_search(current_time):
+            logger.info("Stop-signal-search window active; skipping entry")
+            self.trades_skipped += 1
+            return
+
+        # Initialize per-day tracking (safe even if called out-of-loop)
+        self._ensure_day_initialized(current_time)
+
+        # Enforce max daily loss cap (backtest parity): stop taking new trades for rest of day.
+        if self._daily_loss_limit_reached(current_time):
+            logger.info("Max daily loss reached; skipping entry")
+            self.trades_skipped += 1
+            return
+
+        # Enforce max trades per day (strategy-config parity with backtest).
+        try:
+            trade_limits_cfg = getattr(self.strategy.config, 'trade_limits', None)
+            max_trades_per_day = getattr(trade_limits_cfg, 'max_trades_per_day', None) if trade_limits_cfg else None
+            if max_trades_per_day is not None:
+                day_key = pd.Timestamp(current_time).normalize()
+                taken = int(self._entries_per_day.get(day_key, 0))
+                if taken >= int(max_trades_per_day):
+                    logger.info("Max trades per day reached; skipping entry")
+                    self.trades_skipped += 1
+                    return
+        except Exception:
+            pass
 
         # Validate/compute stop price (portfolio stop fallback)
         entry_side = 'BUY' if action == 'BUY' else 'SELL'
@@ -184,6 +348,33 @@ class LiveTradingEngine:
             self.trades_skipped += 1
             return
 
+        # If quantity wasn't provided by the strategy/signal, compute it from risk config
+        # to match BacktestEngine sizing semantics.
+        if quantity is None or float(quantity) <= 0:
+            try:
+                risk_cfg = getattr(self.strategy.config, 'risk', None)
+                risk_pct = getattr(risk_cfg, 'risk_per_trade_pct', None) if risk_cfg else None
+                if risk_pct is None:
+                    logger.warning(f"Missing quantity and risk_per_trade_pct; cannot size entry")
+                    self.trades_skipped += 1
+                    return
+
+                quantity = self._calculate_position_size_live(
+                    entry_price=float(current_price),
+                    stop_price=float(stop_price_final),
+                    risk_pct=float(risk_pct),
+                    current_time=pd.Timestamp(current_time),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to auto-size quantity: {e}")
+                self.trades_skipped += 1
+                return
+
+        if quantity is None or float(quantity) <= 0:
+            logger.warning(f"Invalid quantity in signal after sizing: {quantity}")
+            self.trades_skipped += 1
+            return
+
         # Enforce portfolio open-risk cap by scaling down quantity if needed
         quantity = self._apply_portfolio_open_risk_cap(
             symbol=self.symbol,
@@ -195,6 +386,20 @@ class LiveTradingEngine:
             logger.info("Portfolio open-risk cap prevents new entry; skipping")
             self.trades_skipped += 1
             return
+
+        # Per-symbol quantity normalization & minimum size enforcement.
+        sym_spec = self._get_market_spec_for_symbol(self.symbol)
+        try:
+            q_prec = int(getattr(sym_spec, 'quantity_precision', 2))
+            quantity = round(float(quantity), q_prec)
+        except Exception:
+            quantity = float(quantity)
+
+        min_size = float(getattr(sym_spec, 'min_trade_size', 0.0) or 0.0)
+        if min_size > 0 and float(quantity) < min_size:
+            logger.info("Quantity below min_trade_size; skipping entry")
+            self.trades_skipped += 1
+            return
         
         # Check balance
         balance = self.adapter.get_account_balance()
@@ -204,7 +409,7 @@ class LiveTradingEngine:
             return
         
         # Calculate margin required
-        margin_required = self.market_spec.calculate_margin(current_price, quantity)
+        margin_required = sym_spec.calculate_margin(current_price, quantity)
         if margin_required > balance.available_balance:
             logger.warning(f"Insufficient margin: required {margin_required}, available {balance.available_balance}")
             self.trades_skipped += 1
@@ -221,20 +426,155 @@ class LiveTradingEngine:
             
             logger.info(f"Entry order placed: {side} {quantity} {self.symbol} @ {current_price}")
             self.trades_executed += 1
+
+            # Record entry details for deterministic realized P&L calculations on CLOSE.
+            try:
+                self._entry_side_by_symbol[self.symbol] = str(side)
+                self._entry_price_by_symbol[self.symbol] = float(current_price)
+                self._entry_qty_by_symbol[self.symbol] = float(quantity)
+            except Exception:
+                pass
+
+            try:
+                day_key = pd.Timestamp(current_time).normalize()
+                self._entries_per_day[day_key] = int(self._entries_per_day.get(day_key, 0)) + 1
+            except Exception:
+                pass
             
             # Place stop loss if provided
             if stop_price_final is not None:
-                self._place_stop_loss(quantity, float(stop_price_final), side)
+                self._place_stop_loss(float(quantity), float(stop_price_final), side)
             
         except Exception as e:
             logger.error(f"Failed to place entry order: {e}")
             self.trades_skipped += 1
+
+    def _calculate_position_size_live(
+        self,
+        *,
+        entry_price: float,
+        stop_price: float,
+        risk_pct: float,
+        current_time: Optional[pd.Timestamp] = None,
+    ) -> float:
+        """Backtest-style position sizing for live execution.
+
+        Uses strategy.config.risk.sizing_mode and risk_per_trade_pct.
+        - account_size: deterministic sizing from configured account_size/initial_capital
+        - daily_equity/equity: uses adapter balance (non-deterministic across live)
+        """
+        if entry_price <= 0 or stop_price <= 0:
+            return 0.0
+
+        price_risk = abs(float(entry_price) - float(stop_price))
+        if price_risk <= 0:
+            return 0.0
+
+        risk_cfg = getattr(self.strategy.config, 'risk', None)
+        sizing_mode = getattr(risk_cfg, 'sizing_mode', 'account_size') if risk_cfg else 'account_size'
+        acct_size = getattr(risk_cfg, 'account_size', None) if risk_cfg else None
+
+        if sizing_mode == 'account_size':
+            base = float(acct_size) if acct_size is not None else float(self.initial_capital)
+        elif sizing_mode == 'daily_equity':
+            ts = pd.Timestamp(current_time) if current_time is not None else pd.Timestamp.utcnow()
+            self._ensure_day_initialized(ts)
+            base = float(self._day_start_equity_by_day.get(self._day_key(ts), float(self.initial_capital)))
+        else:
+            try:
+                bal = self.adapter.get_account_balance()
+                base = float(getattr(bal, 'total_balance', self.initial_capital))
+            except Exception:
+                base = float(self.initial_capital)
+
+        if base <= 0:
+            return 0.0
+
+        risk_amount = float(base) * (float(risk_pct) / 100.0)
+        if risk_amount <= 0:
+            return 0.0
+
+        # Asset-class specific sizing
+        sym_spec = self._get_market_spec_for_symbol(self.symbol)
+
+        if getattr(sym_spec, 'asset_class', None) == 'forex' and getattr(sym_spec, 'contract_size', None) is not None:
+            pip_size = float(getattr(sym_spec, 'pip_value', 0.0001) or 0.0001)
+            stop_loss_pips = float(price_risk) / float(pip_size)
+            if stop_loss_pips < 1.0:
+                return 0.0
+            pip_value_per_unit = float(sym_spec.calculate_pip_value_per_unit(entry_price))
+            if pip_value_per_unit <= 0:
+                return 0.0
+            quantity = float(sym_spec.calculate_quantity_from_risk(risk_amount, stop_loss_pips, entry_price))
+            if quantity <= 0:
+                return 0.0
+            lot_size = quantity / float(sym_spec.contract_size)
+            if lot_size < float(getattr(sym_spec, 'min_trade_size', 0.0)):
+                return 0.0
+        elif getattr(sym_spec, 'asset_class', None) == 'futures' and getattr(sym_spec, 'contract_size', None) is not None:
+            dollar_risk_per_contract = float(price_risk) * float(sym_spec.contract_size)
+            if dollar_risk_per_contract <= 0:
+                return 0.0
+            quantity = float(risk_amount) / float(dollar_risk_per_contract)
+
+            # Match BacktestEngine behavior:
+            # - Portfolio cap ON: floor to whole contracts, require >= 1
+            # - Portfolio cap OFF: allow fractional contracts, but minimum 1
+            portfolio_cfg = getattr(self.strategy.config, 'portfolio', None)
+            portfolio_enabled = bool(getattr(portfolio_cfg, 'enabled', False)) if portfolio_cfg else False
+            max_open_risk_pct = getattr(portfolio_cfg, 'max_open_risk_pct', None) if portfolio_cfg else None
+            if portfolio_enabled and max_open_risk_pct is not None and float(max_open_risk_pct) > 0:
+                quantity = float(np.floor(quantity))
+                quantity = max(1.0, quantity)
+            else:
+                quantity = max(1.0, float(quantity))
+        else:
+            quantity = float(risk_amount) / float(price_risk)
+
+        if quantity <= 0:
+            return 0.0
+
+        # Respect exchange precision/min size
+        qty_prec = int(getattr(sym_spec, 'quantity_precision', 2))
+        quantity = round(float(quantity), qty_prec)
+        if quantity < float(getattr(sym_spec, 'min_trade_size', 0.0)):
+            return 0.0
+        return float(quantity)
+
+    def _is_trade_allowed_at(self, ts: pd.Timestamp) -> bool:
+        """Deterministic, timestamp-only check whether trade filters allow an entry at ts.
+
+        Mirrors BacktestEngine behavior to reduce backtest/live mismatches.
+        """
+        try:
+            from gui_launcher.app import compute_trade_filters_mask
+            import pandas as pd
+
+            idx = pd.DatetimeIndex([pd.Timestamp(ts)])
+            rules = getattr(self.strategy.config, 'trade_filters', []) or []
+            mask = compute_trade_filters_mask(idx, rules, default_tz=None)
+            return bool(mask.iloc[0])
+        except Exception:
+            # Be permissive on errors to avoid silently blocking live trading.
+            return True
     
     def _place_stop_loss(self, quantity: float, stop_price: float, entry_side: str):
         """Place a stop loss order."""
         try:
             # Stop order side is opposite of entry
             stop_side = 'SELL' if entry_side == 'BUY' else 'BUY'
+
+            sym_spec = self._get_market_spec_for_symbol(self.symbol)
+            try:
+                q_prec = int(getattr(sym_spec, 'quantity_precision', 2))
+                quantity = round(float(quantity), q_prec)
+            except Exception:
+                quantity = float(quantity)
+
+            min_size = float(getattr(sym_spec, 'min_trade_size', 0.0) or 0.0)
+            if min_size > 0 and float(quantity) < min_size:
+                logger.info("Stop quantity below min_trade_size; skipping stop placement")
+                return
             
             stop_order = self.adapter.place_stop_market_order(
                 symbol=self.symbol,
@@ -272,10 +612,23 @@ class LiveTradingEngine:
         stop_side = 'SELL' if position.side == 'LONG' else 'BUY'
         
         try:
+            sym_spec = self._get_market_spec_for_symbol(self.symbol)
+            qty = float(position.size)
+            try:
+                q_prec = int(getattr(sym_spec, 'quantity_precision', 2))
+                qty = round(float(qty), q_prec)
+            except Exception:
+                qty = float(qty)
+
+            min_size = float(getattr(sym_spec, 'min_trade_size', 0.0) or 0.0)
+            if min_size > 0 and float(qty) < min_size:
+                logger.info("Stop update quantity below min_trade_size; skipping stop update")
+                return
+
             stop_order = self.adapter.place_stop_market_order(
                 symbol=self.symbol,
                 side=stop_side,
-                quantity=position.size,
+                quantity=qty,
                 stop_price=new_stop_price,
                 reduce_only=True
             )
@@ -287,8 +640,18 @@ class LiveTradingEngine:
         except Exception as e:
             logger.error(f"Failed to update stop loss: {e}")
     
-    def _close_all_positions(self):
-        """Close all open positions."""
+    def _close_all_positions(self, *, current_price: Optional[float] = None, current_time: Optional[pd.Timestamp] = None):
+        """Close all open positions.
+
+        If current_price/current_time are provided, updates realized P&L tracking
+        for max_daily_loss_pct gating.
+        """
+        if current_time is not None:
+            try:
+                self._ensure_day_initialized(current_time)
+            except Exception:
+                pass
+
         for symbol, position in self.active_positions.items():
             try:
                 side = 'SELL' if position.side == 'LONG' else 'BUY'
@@ -299,6 +662,24 @@ class LiveTradingEngine:
                     reduce_only=True
                 )
                 logger.info(f"Closed position: {side} {position.size} {symbol}")
+
+                # Update realized P&L for the day when we can.
+                if current_time is not None and current_price is not None:
+                    entry_side = self._entry_side_by_symbol.get(symbol)
+                    entry_price = self._entry_price_by_symbol.get(symbol)
+                    entry_qty = self._entry_qty_by_symbol.get(symbol)
+                    if entry_side and entry_price is not None and entry_qty is not None:
+                        direction = 1.0 if str(entry_side).upper() == 'BUY' else -1.0
+                        realized = (float(current_price) - float(entry_price)) * float(entry_qty) * direction
+                        day_key = self._day_key(current_time)
+                        self._realized_pnl_after_costs_per_day[day_key] = float(
+                            self._realized_pnl_after_costs_per_day.get(day_key, 0.0)
+                        ) + float(realized)
+
+                # Cleanup local entry tracking.
+                self._entry_side_by_symbol.pop(symbol, None)
+                self._entry_price_by_symbol.pop(symbol, None)
+                self._entry_qty_by_symbol.pop(symbol, None)
             except Exception as e:
                 logger.error(f"Failed to close position {symbol}: {e}")
         
@@ -353,7 +734,7 @@ class LiveTradingEngine:
         if remaining <= 0:
             return 0.0
 
-        proposed_risk = self._estimate_risk_to_stop_amount(entry_price, stop_price, quantity)
+        proposed_risk = self._estimate_risk_to_stop_amount_for_symbol(symbol, entry_price, stop_price, quantity)
         if proposed_risk <= 0:
             return 0.0
 
@@ -363,11 +744,25 @@ class LiveTradingEngine:
         scale = remaining / proposed_risk
         new_qty = quantity * scale
 
-        # Respect exchange precision/min size
-        new_qty = round(float(new_qty), int(getattr(self.market_spec, 'quantity_precision', 2)))
-        if new_qty < float(getattr(self.market_spec, 'min_trade_size', 0.0)):
+        sym_spec = self._get_market_spec_for_symbol(symbol)
+
+        # Futures (CME/CBOT-style) cannot be scaled below 1 contract when the cap is active.
+        # Match BacktestEngine: if scaled quantity < 1, skip; otherwise floor to whole contracts.
+        if sym_spec.asset_class == 'futures' and sym_spec.contract_size is not None:
+            if float(new_qty) < 1.0:
+                return 0.0
+            try:
+                new_qty = float(np.floor(float(new_qty)))
+            except Exception:
+                new_qty = float(int(float(new_qty)))
+            new_qty = max(1.0, float(new_qty))
+            return float(new_qty)
+
+        # Non-futures: Respect exchange precision/min size
+        new_qty = round(float(new_qty), int(getattr(sym_spec, 'quantity_precision', 2)))
+        if new_qty < float(getattr(sym_spec, 'min_trade_size', 0.0)):
             return 0.0
-        return new_qty
+        return float(new_qty)
 
     def _calculate_open_risk_amount_live(self) -> Optional[float]:
         """Compute open risk across all active positions using tracked stop prices.
@@ -379,27 +774,37 @@ class LiveTradingEngine:
             sp = self.active_stop_prices.get(sym)
             if sp is None:
                 return None
-            total += self._estimate_risk_to_stop_amount(float(pos.entry_price), float(sp), float(pos.size))
+            entry_price = float(getattr(pos, 'entry_price', 0.0) or 0.0)
+            if entry_price <= 0:
+                entry_price = float(self._entry_price_by_symbol.get(sym, 0.0) or 0.0)
+            total += self._estimate_risk_to_stop_amount_for_symbol(sym, float(entry_price), float(sp), float(pos.size))
         return float(total)
 
-    def _estimate_risk_to_stop_amount(self, entry_price: float, stop_price: float, quantity: float) -> float:
+    def _estimate_risk_to_stop_amount_for_symbol(self, symbol: str, entry_price: float, stop_price: float, quantity: float) -> float:
+        spec = self._get_market_spec_for_symbol(symbol)
+        return self._estimate_risk_to_stop_amount_for_spec(spec, entry_price, stop_price, quantity)
+
+    def _estimate_risk_to_stop_amount_for_spec(self, spec: MarketSpec, entry_price: float, stop_price: float, quantity: float) -> float:
         price_risk = abs(float(entry_price) - float(stop_price))
         if price_risk <= 0 or quantity <= 0:
             return 0.0
 
-        # Binance-style perpetuals behave like spot: pnl = price_change * qty
-        if self.market_spec.asset_class == 'forex' and self.market_spec.contract_size is not None:
-            pip_size = self.market_spec.pip_value or 0.0001
+        if spec.asset_class == 'forex' and spec.contract_size is not None:
+            pip_size = spec.pip_value or 0.0001
             stop_loss_pips = price_risk / pip_size
-            pip_value_per_unit = self.market_spec.calculate_pip_value_per_unit(entry_price)
+            pip_value_per_unit = spec.calculate_pip_value_per_unit(entry_price)
             if stop_loss_pips <= 0 or pip_value_per_unit <= 0:
                 return 0.0
             return abs(quantity) * stop_loss_pips * pip_value_per_unit
 
-        if self.market_spec.asset_class == 'futures' and self.market_spec.contract_size is not None:
-            return abs(quantity) * price_risk * float(self.market_spec.contract_size)
+        if spec.asset_class == 'futures' and spec.contract_size is not None:
+            return abs(quantity) * price_risk * float(spec.contract_size)
 
         return abs(quantity) * price_risk
+
+    def _estimate_risk_to_stop_amount(self, entry_price: float, stop_price: float, quantity: float) -> float:
+        # Backward-compatible wrapper for single-symbol engines.
+        return self._estimate_risk_to_stop_amount_for_spec(self.market_spec, entry_price, stop_price, quantity)
 
     def _get_stop_price_with_fallback_live(
         self,

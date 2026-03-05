@@ -2,120 +2,15 @@
 {% block content %}
   <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
   <h2>Step 5 — Advanced (Optional)</h2>
-  <div class="muted">Newbie path: keep defaults and hit Skip. Advanced users can override filters and trade management here.</div>
+  <div class="muted">Newbie path: keep defaults and hit Skip. Advanced users can override risk/limits and trade management here.</div>
 
   {% set ad_root = advanced_defaults or {} %}
   {% set ad = ad_root.get('defaults') or {} %}
   {% set ad_labels = ad.get('labels') or {} %}
-  {% set tz_label = ad_labels.get('timezone') or 'UTC (GMT+00)' %}
 
   <form class="card" method="post" action="/create-strategy-guided/step5" novalidate>
     <input type="hidden" name="draft_id" value="{{ draft_id }}" />
-
-    <h3>Calendar filters</h3>
-    <div class="muted">Controls TradingLab calendar filters (day-of-week + sessions). This overrides the repo master filter defaults.</div>
-    <div class="muted" style="margin-top: 6px;">Timezone: <strong>{{ tz_label }}</strong></div>
-
-    {% set mc = master_calendar|default({'allowed_days':[0,1,2,3,4], 'sessions': {'Asia': {'enabled': True, 'start':'23:00', 'end':'08:00'}, 'London': {'enabled': True, 'start':'07:00', 'end':'16:00'}, 'NewYork': {'enabled': True, 'start':'13:00', 'end':'21:00'}}}, true) %}
     {% set mtm = master_tm|default({'take_profit': {'enabled': True, 'target_r': 3.0, 'exit_pct': 100.0}, 'partial_exit': {'enabled': False, 'level_r': 1.5, 'exit_pct': 50.0}, 'trailing_stop': {'enabled': False, 'length': 21, 'activation_r': 0.5, 'stepped': True, 'min_move_pips': 7.0}}, true) %}
-
-    {% set cal_mode = draft.get('calendar_filters_mode') or 'master' %}
-
-    <label>
-      <input type="radio" name="calendar_mode" value="master" {% if cal_mode == 'master' %}checked{% endif %} />
-      Use master defaults (recommended)
-    </label>
-    <label>
-      <input type="radio" name="calendar_mode" value="disable" {% if cal_mode == 'disable' %}checked{% endif %} />
-      Disable calendar filters (override master)
-    </label>
-    <label>
-      <input type="radio" name="calendar_mode" value="custom" {% if cal_mode == 'custom' %}checked{% endif %} />
-      Custom
-    </label>
-
-    {% set allowed_days = draft.get('calendar_allowed_days') or mc['allowed_days'] %}
-    {% set sessions = draft.get('calendar_sessions') or {'Asia': (mc['sessions']['Asia']['enabled']|default(true)), 'London': (mc['sessions']['London']['enabled']|default(true)), 'NewYork': (mc['sessions']['NewYork']['enabled']|default(true))} %}
-    {% set sess_times = draft.get('calendar_session_times') or {'Asia': {'start': mc['sessions']['Asia']['start'], 'end': mc['sessions']['Asia']['end']}, 'London': {'start': mc['sessions']['London']['start'], 'end': mc['sessions']['London']['end']}, 'NewYork': {'start': mc['sessions']['NewYork']['start'], 'end': mc['sessions']['NewYork']['end']}} %}
-
-    <details class="card" style="margin-top: 12px;">
-      <summary style="cursor:pointer;"><strong>Show master defaults</strong> <span class="muted">(from config/)</span></summary>
-      <div style="margin-top: 10px;">
-        <div><strong>Allowed days:</strong> {{ mc['allowed_days'] }}</div>
-        <div style="margin-top: 6px;"><strong>Sessions:</strong></div>
-        <div class="muted" style="margin-top: 4px;">
-          Asia: {{ mc['sessions']['Asia']['start'] }}–{{ mc['sessions']['Asia']['end'] }} (enabled={{ mc['sessions']['Asia']['enabled'] }})<br />
-          London: {{ mc['sessions']['London']['start'] }}–{{ mc['sessions']['London']['end'] }} (enabled={{ mc['sessions']['London']['enabled'] }})<br />
-          NewYork: {{ mc['sessions']['NewYork']['start'] }}–{{ mc['sessions']['NewYork']['end'] }} (enabled={{ mc['sessions']['NewYork']['enabled'] }})
-        </div>
-      </div>
-    </details>
-
-    <div id="calendar_custom" style="margin-top: 10px; display: none;">
-      <div class="card" style="margin-top: 12px;">
-        <strong>Allowed days</strong>
-        <div class="muted">0=Mon … 6=Sun. Typical: Mon–Fri.</div>
-        <label><input type="checkbox" name="dow" value="0" {% if 0 in allowed_days %}checked{% endif %} /> Mon</label>
-        <label><input type="checkbox" name="dow" value="1" {% if 1 in allowed_days %}checked{% endif %} /> Tue</label>
-        <label><input type="checkbox" name="dow" value="2" {% if 2 in allowed_days %}checked{% endif %} /> Wed</label>
-        <label><input type="checkbox" name="dow" value="3" {% if 3 in allowed_days %}checked{% endif %} /> Thu</label>
-        <label><input type="checkbox" name="dow" value="4" {% if 4 in allowed_days %}checked{% endif %} /> Fri</label>
-        <label><input type="checkbox" name="dow" value="5" {% if 5 in allowed_days %}checked{% endif %} /> Sat</label>
-        <label><input type="checkbox" name="dow" value="6" {% if 6 in allowed_days %}checked{% endif %} /> Sun</label>
-      </div>
-
-      <div class="card" style="margin-top: 12px;">
-        <strong>Trading sessions</strong>
-        <div class="muted">Custom session windows are stored in UTC. You can enable/disable and edit start/end times.</div>
-        <button type="button" id="copyMasterCalendarBtn" style="margin-top: 8px;">Copy master → custom</button>
-        <div style="margin-top: 10px;">
-          <div class="card" style="margin-top: 8px;">
-            <label><input type="checkbox" name="session_Asia" value="1" {% if sessions.get('Asia') %}checked{% endif %} /> Asia</label>
-            <div class="muted">Start/end in UTC (HH:MM). Example: 23:00–08:00 (wraps over midnight).</div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
-              <div>
-                <label>Start</label>
-                <input name="session_Asia_start" type="text" placeholder="23:00" value="{{ sess_times['Asia']['start'] }}" />
-              </div>
-              <div>
-                <label>End</label>
-                <input name="session_Asia_end" type="text" placeholder="08:00" value="{{ sess_times['Asia']['end'] }}" />
-              </div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top: 8px;">
-            <label><input type="checkbox" name="session_London" value="1" {% if sessions.get('London') %}checked{% endif %} /> London</label>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
-              <div>
-                <label>Start</label>
-                <input name="session_London_start" type="text" placeholder="07:00" value="{{ sess_times['London']['start'] }}" />
-              </div>
-              <div>
-                <label>End</label>
-                <input name="session_London_end" type="text" placeholder="16:00" value="{{ sess_times['London']['end'] }}" />
-              </div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top: 8px;">
-            <label><input type="checkbox" name="session_NewYork" value="1" {% if sessions.get('NewYork') %}checked{% endif %} /> NewYork</label>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
-              <div>
-                <label>Start</label>
-                <input name="session_NewYork_start" type="text" placeholder="13:00" value="{{ sess_times['NewYork']['start'] }}" />
-              </div>
-              <div>
-                <label>End</label>
-                <input name="session_NewYork_end" type="text" placeholder="21:00" value="{{ sess_times['NewYork']['end'] }}" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <hr />
 
     <h3>Risk & limits</h3>
     <div class="muted">Optional overrides for sizing, daily limits, and backtest costs. If you leave overrides off, TradingLab uses repo + market-profile defaults.</div>
@@ -145,10 +40,6 @@
       <div>
         <label>Account size ($)</label>
         <input name="account_size" type="number" step="100" min="1" value="{{ draft.get('account_size') or 10000 }}" />
-      </div>
-      <div>
-        <label>Max trades per day</label>
-        <input name="max_trades_per_day" type="number" step="1" min="1" value="{{ draft.get('max_trades_per_day') or 1 }}" />
       </div>
       <div>
         {% set mdl = draft.get('max_daily_loss_pct') %}
@@ -580,16 +471,6 @@
   <div
     id="masterDefaults"
     style="display:none;"
-    data-allowed-days="{{ mc['allowed_days']|join(',') }}"
-    data-session-asia-enabled="{{ 1 if mc['sessions']['Asia']['enabled'] else 0 }}"
-    data-session-london-enabled="{{ 1 if mc['sessions']['London']['enabled'] else 0 }}"
-    data-session-newyork-enabled="{{ 1 if mc['sessions']['NewYork']['enabled'] else 0 }}"
-    data-session-asia-start="{{ mc['sessions']['Asia']['start'] }}"
-    data-session-asia-end="{{ mc['sessions']['Asia']['end'] }}"
-    data-session-london-start="{{ mc['sessions']['London']['start'] }}"
-    data-session-london-end="{{ mc['sessions']['London']['end'] }}"
-    data-session-newyork-start="{{ mc['sessions']['NewYork']['start'] }}"
-    data-session-newyork-end="{{ mc['sessions']['NewYork']['end'] }}"
     data-tp-enabled="{{ 1 if mtm['take_profit']['enabled'] else 0 }}"
     data-tp-target-r="{{ mtm['take_profit']['target_r'] }}"
     data-tp-exit-pct="{{ mtm['take_profit']['exit_pct'] }}"

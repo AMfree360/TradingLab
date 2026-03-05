@@ -69,6 +69,7 @@ Thin local web UI that runs the same TradingLab scripts.
 
 Key pages:
 - `/` home
+- `/data` download + consolidate datasets
 - `/strategies` browse/edit strategy specs
 - `/create-strategy-guided` guided wizard (recommended)
 - `/backtest` run a backtest (supports file uploads + advanced options)
@@ -312,6 +313,18 @@ Examples:
 Note: provider symbol formats vary (e.g. Yahoo uses `EURUSD=X`, futures like `ES=F`).
 Note: if you use `yfinance`, you may need to install it with `pip install yfinance`.
 
+## Developer Day Notes (2026-02-27)
+
+- Guided Builder v2 (Step 4) maintenance:
+  - Fixed per-row Remove behavior for `context`, `signal`, and `trigger` rule blocks so removal no longer reinserts legacy rows.
+  - Removed legacy renderer fallback and consolidated on the canonical `ruleRow` renderer to avoid mixed DOM shapes.
+  - Wired `trade-filters` add-button per-section (same pattern as `add-context`, `add-signal`, `add-trigger`) and added a small retry helper to wait for the renderer bind.
+  - Added integration tests and a Puppeteer reproducer to validate add/remove behaviour.
+  - Remaining: `Add Trade Filter` sometimes appears to do nothing in some load/order cases (no error logged). Investigation scheduled.
+
+Notes:
+- Tests and Puppeteer reproducer exercised locally; follow-up tomorrow to remove transient retry and ensure deterministic initialization ordering.
+
 ## Standard data split policy (required)
 
 All research/validation runs should follow a single standardized split policy to avoid accidental data leakage.
@@ -398,6 +411,20 @@ Expected artifacts:
 - Example with config profile:
 
   `./.venv/bin/python scripts/run_final_oos_test.py --strategy donchian_breakout --config-profile phase1_tuned`
+
+## Wrap-up: 2026-02-26
+
+- Today: implemented server + engine hooks for centralized `trade_filters`, added module-level `compute_trade_filters_mask`, and updated the GUI to serialize `trade_filters` from the Step 4 block. Ran full test suite.
+- Test run: `./.venv/bin/python -m pytest -q` → 127 passed, 7 skipped, 40 warnings.
+
+## Todo (2026-02-27)
+
+- Write focused unit tests for `compute_trade_filters_mask` (edge cases: wrap-around sessions, day/month, timezone conversions) — tests/test_trade_filters.py
+- Add engine-level unit tests ensuring `_is_trade_allowed_at` blocks entries deterministically (no lookahead) during decision and fill timestamps.
+- Remove per-step filter UI/serialization from other wizard steps so all filter controls live only in Step 4 `trade_filters`.
+- Update frontend templates and `guided_builder_v2.js` to prevent duplicate filter serialization and only include `trade_filters_json` in preview/setup payloads.
+- Add integration tests that submit builder preview/setup payloads with `trade_filters` and assert preview visuals/backtest behavior reflects the filters (filtered markers, blocked entries).
+- Verify and document remaining filter types that need external data (e.g., `news_buffer`) and list required integrations.
 
 ## Tuning (non-consuming)
 

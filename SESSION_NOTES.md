@@ -310,3 +310,23 @@
 ### Immediate “first task” suggestion
 - Keep on ice until Donchian + data pipeline are stable.
 
+## Snapshot (as of 2026-02-27)
+
+### What shipped / changed today
+- Fixed Guided Builder v2 (Step 4) per-row Remove handling for `context`, `signal`, and `trigger` rule blocks — removes now reliably commit state and do not re-insert legacy rows.
+- Consolidated on the canonical `ruleRow` renderer and removed the legacy `createRuleRow` fallback to avoid mixed DOM shapes that caused restore/reinsert races.
+- Rewired the `Add Trade Filter` button to be wired per-section (same pattern as context/signal/trigger) and added a small retry helper to wait for the renderer binding when initialization ordering differs.
+- Added a focused Jest integration test and a Puppeteer reproducer to validate add/remove flows.
+
+### Current status
+- Context/signal/trigger remove issues: fixed and validated by Puppeteer + Jest.
+- Trade filter add: wired per-section but intermittently a click results in no visible block (no console errors, no empty placeholder DIV). Will continue investigation tomorrow.
+
+### Todo (tomorrow)
+- Investigate `Add Trade Filter` no-op path: reproduce reliably, add diagnostic logging, and determine whether this is an initialization/order race or a state-manager subscriber race.
+- If ordering is the cause, make renderer binding deterministic (defer wiring or ensure `ruleRow` is available before UI wiring) and re-run Puppeteer harness.
+- Commit changes, run full test-suite, and open a PR with notes and testing evidence.
+
+### Quick repro notes
+- Reproducer: `scripts/reproduce_ma_stack_remove.js` — exercises Add Context → Remove → Add Trade Filter and logs before/after snapshots; run locally against `./.venv/bin/uvicorn gui_launcher.app:app`.
+

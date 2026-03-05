@@ -643,6 +643,8 @@ class StrategyCompiler:
             "regime_filters": spec.filters.regime_filters or {},
             "news_filter": spec.filters.news_filter or {},
             "volume_filters": spec.filters.volume_filters or {},
+            # Time-based trade gating rules (session windows, blackouts, etc)
+            "trade_filters": list(getattr(spec, "trade_filters", None) or []),
         }
 
         # Execution overrides (optional)
@@ -741,6 +743,7 @@ class StrategyCompiler:
                 "market": spec_summary["market"],
                 "entry_tf": spec_summary["entry_tf"],
                 "context_tf": spec_summary.get("context_tf"),
+                "trade_filters": list(getattr(spec, "trade_filters", None) or []),
                 "required_timeframes": required_tfs,
                 "long": spec_summary["long"],
                 "short": spec_summary["short"],

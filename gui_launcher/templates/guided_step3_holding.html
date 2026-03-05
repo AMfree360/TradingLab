@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
-  <h2>Step 3 — Holding style</h2>
-
-  <form class="card" method="post" action="/create-strategy-guided/step3">
+  {% set _tpl = (draft and (draft.get('template') or '') or '')|lower %}
+  <h2>{% if _tpl == 'builder_v2' %}Step 4 — Holding style{% else %}Step 3 — Holding style{% endif %}</h2>
+  <form class="card" method="post" action="{% if _tpl == 'builder_v2' %}/create-strategy-guided/step4{% else %}/create-strategy-guided/step3{% endif %}">
     <input type="hidden" name="draft_id" value="{{ draft_id }}" />
 
     <label>Holding style</label>

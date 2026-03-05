@@ -590,6 +590,10 @@ class StrategyConfig(BaseModel):
     news_filter: NewsFilterConfig = Field(default_factory=NewsFilterConfig)
     regime_filters: RegimeFiltersConfig = Field(default_factory=RegimeFiltersConfig)
     volume_filters: VolumeFiltersConfig = Field(default_factory=VolumeFiltersConfig)
+    trade_filters: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Optional time-based entry gating rules (session windows, blackouts, etc).",
+    )
     trade_limits: TradeLimitConfig = Field(default_factory=TradeLimitConfig)
     trade_direction: TradeDirectionConfig = Field(default_factory=TradeDirectionConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)

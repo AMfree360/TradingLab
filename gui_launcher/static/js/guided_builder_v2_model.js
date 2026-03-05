@@ -37,6 +37,7 @@
       context_rules: [],
       signal_rules: [],
       trigger_rules: [],
+      trade_filters: [],
       risk_per_trade_pct: 1.0,
       stop_type: 'atr',
       atr_length: 14,

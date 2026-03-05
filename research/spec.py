@@ -217,6 +217,14 @@ class StrategySpec(BaseModel):
 
     filters: FiltersSpec = Field(default_factory=FiltersSpec)
 
+    # Trade filters are time-based gating rules (session windows, blackout windows, etc)
+    # that should be applied deterministically in preview/backtest/live.
+    # Keep permissive to allow UI rule objects to pass through.
+    trade_filters: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Optional time-based entry gating rules (e.g. session/blackout windows).",
+    )
+
     trade_management: TradeManagementSpec = Field(default_factory=TradeManagementSpec)
 
     execution: ExecutionSpec = Field(default_factory=ExecutionSpec)

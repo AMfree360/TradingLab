@@ -441,6 +441,17 @@ def _validate_ast(tree: ast.AST) -> None:
                 if not (isinstance(tf_node, ast.Constant) and isinstance(tf_node.value, str)):
                     raise DSLCompileError('at() first arg must be a literal timeframe string, e.g. "1h"')
 
+            # Disallow forward-looking shifts.
+            # Negative shifts leak future information and can invalidate backtests.
+            if fn == "shift" and len(node.args) == 2:
+                try:
+                    periods = _literal_number_with_unary(node.args[1])
+                except DSLCompileError:
+                    # Non-literal periods are checked at runtime by the shift() primitive.
+                    periods = None
+                if periods is not None and int(periods) < 0:
+                    raise DSLCompileError("shift(periods) must be >= 0 (negative shifts are look-ahead)")
+
 
 def _name_of_call(fn: ast.AST) -> str | None:
     if isinstance(fn, ast.Name):
@@ -473,6 +484,17 @@ def _literal_number(node: ast.AST) -> float:
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return float(node.value)
     raise DSLCompileError("Numeric arguments must be literal numbers")
+
+
+def _literal_number_with_unary(node: ast.AST) -> float:
+    """Like _literal_number, but also accepts unary +/- numeric literals.
+
+    Python parses `-1` as UnaryOp(USub, Constant(1)), not Constant(-1).
+    """
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        v = _literal_number(node.operand)
+        return -v if isinstance(node.op, ast.USub) else v
+    return _literal_number(node)
 
 
 def _build_env(df: pd.DataFrame) -> dict[str, object]:
@@ -540,7 +562,10 @@ def _build_env(df: pd.DataFrame) -> dict[str, object]:
         return a.rolling(window=int(length), min_periods=1).min()
 
     def shift(a: pd.Series, periods: int) -> pd.Series:
-        return a.shift(int(periods))
+        p = int(periods)
+        if p < 0:
+            raise DSLCompileError("shift(periods) must be >= 0 (negative shifts are look-ahead)")
+        return a.shift(p)
 
     def nz(a: pd.Series, value: float = 0.0) -> pd.Series:
         return a.fillna(value)

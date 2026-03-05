@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
   <h1>{{ (draft and draft.get('heading')) or 'Create Strategy (Guided)' }}</h1>
-  <h2>Step 4 — Context (Regime) + Trigger</h2>
+  <h2>Step 3 — Context (Regime) + Trigger</h2>
 
-  <form id="guided_step4_form" action="/create-strategy-guided/step4" method="post" novalidate onsubmit="return (window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(this))">
+  <form id="guided_step4_form" action="/create-strategy-guided/step3" method="post" novalidate onsubmit="return (window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(this))">
     {% if csrf_token %}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
     {% endif %}
@@ -13,6 +13,7 @@
     <input type="hidden" name="context_rules_json" id="context_rules_json" value='{{ (draft.get("context_rules") or []) | tojson }}' />
     <input type="hidden" name="signal_rules_json" id="signal_rules_json" value='{{ (draft.get("signal_rules") or []) | tojson }}' />
     <input type="hidden" name="trigger_rules_json" id="trigger_rules_json" value='{{ (draft.get("trigger_rules") or []) | tojson }}' />
+    <input type="hidden" name="trade_filters_json" id="trade_filters_json" value='{{ (draft.get("trade_filters") or []) | tojson }}' />
 
     {% if not draft.symbol %}
       <label>Instrument (custom)</label>
@@ -98,6 +99,7 @@
     </div>
     <!-- Global tips moved into per-row help panels to reduce clutter. -->
     <div id="context-rules" style="margin-top:10px;"></div>
+    
 
     <div style="margin-top:8px; display:flex; gap:12px; align-items:center;">
       <div>
@@ -181,6 +183,15 @@
       <button type="button" id="add-trigger">Add Trigger Rule</button>
     </div>
     <div id="trigger-rules" style="margin-top:10px;"></div>
+
+    <hr />
+    <h3>Trade Filters (per-entry gating)</h3>
+    <div class="muted">Define trade-level filters such as session windows, blackout windows, and day/month gates. Rules are serialized into <code>trade_filters_json</code>.</div>
+    <div style="margin-top:8px;">
+      <button type="button" id="add-trade-filter">Add Trade Filter</button>
+    </div>
+    <div id="trade-filters" style="margin-top:10px;"></div>
+
 
     <div class="card" id="setup-visual-card" style="margin-top: 12px;">
       <h4>Setup visual (preview)</h4>
@@ -287,7 +298,7 @@
 
       async function fallback_preview(payload) {
         try {
-          const form = document.querySelector('form#guided_step4_form') || document.querySelector('form[action="/create-strategy-guided/step4"]');
+          const form = document.querySelector('form#guided_step4_form') || document.querySelector('form[action="/create-strategy-guided/step3"]') || document.querySelector('form[action="/create-strategy-guided/step4"]');
           if (!payload) {
             // build minimal payload from form/hidden inputs
             payload = {};
@@ -316,6 +327,7 @@
             try { payload.context_rules = JSON.parse((document.getElementById('context_rules_json') || {}).value || '[]'); } catch (e) { payload.context_rules = []; }
             try { payload.signal_rules = JSON.parse((document.getElementById('signal_rules_json') || {}).value || '[]'); } catch (e) { payload.signal_rules = []; }
             try { payload.trigger_rules = JSON.parse((document.getElementById('trigger_rules_json') || {}).value || '[]'); } catch (e) { payload.trigger_rules = []; }
+            try { payload.trade_filters = JSON.parse((document.getElementById('trade_filters_json') || {}).value || '[]'); } catch (e) { payload.trade_filters = []; }
           }
 
           const dbg = document.getElementById('guided-debug'); if (dbg) dbg.textContent = 'Fallback preview running...\n' + (dbg.textContent || '');
@@ -483,4 +495,5 @@
       }, 300);
     })();
   </script>
+  <!-- Removed defensive fallback: root cause fixed in JS commitSectionFromDOM -->
 {% endblock %}

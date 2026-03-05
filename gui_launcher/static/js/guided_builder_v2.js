@@ -8,9 +8,13 @@
   // detailed `x_guided_ui`), skip this lightweight/clean-rewrite module to
   // avoid it overwriting per-type controls. The full Phase-4 renderer
   // appears earlier in the file and will run instead.
-  try {
-    if (window && window.guidedBuilderV2PreferFullRenderer) return;
-  } catch (e) {}
+  // Historically this module would early-return when
+  // `window.guidedBuilderV2PreferFullRenderer` was set to avoid
+  // duplicating a richer full renderer that runs from another bundle.
+  // In practice that flag may be present while the full renderer bundle
+  // is not actually loaded (race or missing script). To ensure the
+  // page always has a functioning renderer we no longer bail out here.
+  // The module will initialize and subscribe to `GuidedBuilderV2State`.
   const FEATURE_FLAG = { volume: true };
   // Runtime debug gate: set `window.__GUIDED_V2_DEBUG = true` in the console
   // or via test harness to enable debug persistence (localStorage / window globals).
@@ -27,7 +31,7 @@
         // flush state then sync hidden from state
         try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } } catch (e) {}
         // fallback: sync from DOM containers
-        try { syncHidden(form, document.getElementById('context-rules'), document.getElementById('signal-rules'), document.getElementById('trigger-rules')); } catch (e) {}
+        try { syncHidden(form, document.getElementById('context-rules'), document.getElementById('signal-rules'), document.getElementById('trigger-rules'), document.getElementById('trade-filters')); } catch (e) {}
       } catch (e) { /* best-effort */ }
       return true;
     };
@@ -40,9 +44,43 @@
     ['atr_spike', 'Volatility: ATR spike'],
     ['structure_breakout_state', 'Structure: Breakout state'],
     ['ma_spread_pct', 'Trend strength: MA spread %'],
-    ['bollinger_context', 'Bollinger (anchor TF)'],
+    ['bollinger_context', 'Bollinger'],
     ['custom', 'Custom (DSL)']
   ];
+
+  const WEEKDAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const TIMEZONES = [
+    'UTC','Etc/UTC','Europe/London','Europe/Berlin','Europe/Paris','Europe/Madrid','Europe/Rome','Europe/Stockholm','Europe/Warsaw',
+    'America/New_York','America/Detroit','America/Toronto','America/Chicago','America/Winnipeg','America/Denver','America/Edmonton',
+    'America/Los_Angeles','America/Vancouver','America/Sao_Paulo','America/Argentina/Buenos_Aires','America/Mexico_City',
+    'Asia/Tokyo','Asia/Seoul','Asia/Shanghai','Asia/Hong_Kong','Asia/Singapore','Asia/Kolkata','Asia/Dubai','Asia/Jakarta',
+    'Australia/Sydney','Australia/Melbourne','Pacific/Auckland','Africa/Johannesburg','Africa/Nairobi','Asia/Manila','Asia/Kuala_Lumpur',
+    'Etc/GMT+12','Etc/GMT+11','Etc/GMT+10','Etc/GMT+9','Etc/GMT+8','Etc/GMT+7','Etc/GMT+6','Etc/GMT+5','Etc/GMT+4','Etc/GMT+3','Etc/GMT+2','Etc/GMT+1'
+  ];
+
+  // Ensure a shared datalist element exists for timezone suggestions. This creates
+  // a lightweight, searchable autocomplete experience across all timezone inputs.
+  function ensureTimezoneDatalist() {
+    try {
+      if (document.getElementById('guided-v2-timezone-datalist')) return;
+      const dl = document.createElement('datalist');
+      dl.id = 'guided-v2-timezone-datalist';
+      // include a helpful empty option representing default/exchange
+      const emptyOpt = document.createElement('option'); emptyOpt.value = ''; dl.appendChild(emptyOpt);
+      for (const z of TIMEZONES) {
+        try { const o = document.createElement('option'); o.value = z; dl.appendChild(o); } catch (e) {}
+      }
+      try {
+        const head = document.head || document.getElementsByTagName('head')[0] || document.body || document.documentElement;
+        head.appendChild(dl);
+      } catch (e) {
+        // fallback: append to body when available
+        try { document.body.appendChild(dl); } catch (ee) {}
+      }
+    } catch (e) {}
+  }
+  try { if (typeof document !== 'undefined') { ensureTimezoneDatalist(); document.addEventListener && document.addEventListener('DOMContentLoaded', ensureTimezoneDatalist); } } catch (e) {}
 
   const signalTypes = [
     ['ma_cross', 'MA cross (fast vs slow)'],
@@ -63,6 +101,13 @@
     ['donchian_breakout', 'Donchian breakout/breakdown'],
     ['range_breakout', 'Range breakout'],
     ['wide_range_candle', 'Wide-range candle (vs ATR)'],
+    ['custom', 'Custom (DSL)']
+  ];
+
+  const tradeFilterTypes = [
+    ['session_window', 'Session window (allow entries during session)'],
+    ['blackout_window', 'Blackout window (disallow entries)'],
+    ['day_month', 'Day / Month filter'],
     ['custom', 'Custom (DSL)']
   ];
 
@@ -163,6 +208,7 @@
       const ctxContainer = f.querySelector ? f.querySelector('#context-rules') : document.getElementById('context-rules');
       const sigContainer = f.querySelector ? f.querySelector('#signal-rules') : document.getElementById('signal-rules');
       const trgContainer = f.querySelector ? f.querySelector('#trigger-rules') : document.getElementById('trigger-rules');
+      const tradeContainer = f.querySelector ? f.querySelector('#trade-filters') : document.getElementById('trade-filters');
       // Snapshot the DOM containers (innerHTML + visible field values) to localStorage
       try {
         function snapshotContainer(container) {
@@ -205,6 +251,7 @@
       try { writeHiddenStamped(f, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer)), 'final-pre-submit'); } catch (e) {}
       try { writeHiddenStamped(f, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer)), 'final-pre-submit'); } catch (e) {}
       try { writeHiddenStamped(f, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer)), 'final-pre-submit'); } catch (e) {}
+      try { writeHiddenStamped(f, 'trade_filters_json', JSON.stringify(canonicalSerialize(tradeContainer)), 'final-pre-submit'); } catch (e) {}
     } catch (e) { /* best-effort */ }
   }
   try { window.__guided_v2_invoke_final_pre_write = invokeFinalPreSubmitWrites; } catch (e) {}
@@ -215,8 +262,15 @@
   // serializer when present, otherwise fall back to the class-based one.
   function canonicalSerialize(container) {
     try {
+      const hasRows = !!(container && container.querySelectorAll && container.querySelectorAll('.rule-row') && container.querySelectorAll('.rule-row').length > 0);
       if (typeof serializeRulesFromDOMMinimal === 'function') {
-        try { const m = serializeRulesFromDOMMinimal(container); if (Array.isArray(m)) return m; } catch (e) {}
+        try {
+          const m = serializeRulesFromDOMMinimal(container);
+          // Only trust an empty minimal-serializer result when there are
+          // no rows. When rows exist, fall through so our tolerant fallback
+          // can capture `data-field` based rows.
+          if (Array.isArray(m) && (m.length > 0 || !hasRows)) return m;
+        } catch (e) {}
       }
       if (typeof serializeRulesFromDOM === 'function') {
         try { const d = serializeRulesFromDOM(container); if (Array.isArray(d) && d.length > 0) return d; } catch (e) {}
@@ -224,7 +278,6 @@
       // If prior serializers returned nothing but rows exist, attempt the
       // tolerant inline fallback to capture advanced renderer markup.
       try {
-        const hasRows = container && container.querySelector && container.querySelectorAll && container.querySelectorAll('.rule-row') && container.querySelectorAll('.rule-row').length > 0;
         if (hasRows) {
           const fb = canonicalSerializeFallback(container);
           if (Array.isArray(fb)) return fb;
@@ -245,20 +298,73 @@
       const rows = Array.from(container.querySelectorAll('.rule-row'));
       for (const r of rows) {
         try {
-          const typeEl = r.querySelector('.rule-type') || r.querySelector('[data-type]') || r.querySelector('[data-field="type"]') || r.querySelector('select[name="type"]');
-          const type = typeEl ? (typeEl.value || typeEl.getAttribute && (typeEl.getAttribute('data-type') || typeEl.getAttribute('data-field')) || '') : '';
-          const rule = { type: String(type || '') };
+          // Determine selected rule type. Prefer the explicit type select.
+          // Some renderers momentarily leave the select unselected
+          // (selectedIndex=-1) even though options exist; default to the
+          // first option in that case so we don't serialize type:"".
+          const typeSelect = r.querySelector('select[data-field="type"]') || r.querySelector('.rule-type') || r.querySelector('select[name="type"]');
+          let selectedType = '';
+          try {
+            if (typeSelect) {
+              selectedType = String(typeSelect.value || '');
+              if (!selectedType && typeof typeSelect.selectedIndex === 'number' && typeSelect.selectedIndex < 0) {
+                const opt0 = (typeSelect.options && typeSelect.options.length) ? typeSelect.options[0] : null;
+                if (opt0 && opt0.value !== undefined) selectedType = String(opt0.value);
+              }
+            }
+          } catch (e) { selectedType = ''; }
+          // Fallback: some advanced rows only expose per-type blocks.
+          if (!selectedType) {
+            try {
+              const block = r.querySelector('[data-type]');
+              if (block && block.getAttribute) selectedType = String(block.getAttribute('data-type') || '');
+            } catch (e) {}
+          }
+
+          const rule = { type: String(selectedType || '') };
           const tfEl = r.querySelector('.rule-tf') || r.querySelector('[data-tf]') || r.querySelector('select[name="tf"]'); if (tfEl && tfEl.value && tfEl.value !== 'default') rule.tf = tfEl.value;
           const validEl = r.querySelector('.rule-valid') || r.querySelector('[data-valid]') || r.querySelector('input[name="valid_for_bars"]'); if (validEl && validEl.value !== '') { const n = Number(validEl.value); if (Number.isFinite(n)) rule.valid_for_bars = n; }
-          // collect params from .param, data-field or data-key
-          const params = r.querySelectorAll('.param, [data-field], [data-key]');
+
+          // Only serialize params from the active per-type block to avoid
+          // polluting the rule object with defaults from hidden blocks.
+          // Always include base fields (type/side/tf/valid_for_bars).
+          let activeBlock = null;
+          try {
+            if (selectedType) {
+              const safe = String(selectedType).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              activeBlock = r.querySelector('[data-type="' + safe + '"]');
+            }
+          } catch (e) { activeBlock = null; }
+          const baseKeys = { type: true, side: true, tf: true, valid_for_bars: true };
+
+          const params = r.querySelectorAll('input, select, textarea');
           for (const p of Array.from(params)) {
             try {
               const k = p.getAttribute && (p.getAttribute('data-key') || p.getAttribute('data-field') || p.getAttribute('name'));
               if (!k) continue;
+              if (k === 'type') continue; // type is handled explicitly above
+              const inActiveBlock = !!(activeBlock && activeBlock.contains && activeBlock.contains(p));
+              if (!inActiveBlock && !baseKeys[k]) continue;
               let v = null;
+              // checkboxes -> boolean
               if (p.type === 'checkbox') v = !!p.checked;
-              else v = p.value;
+              // multi-selects -> array of selected values
+              else if (p.tagName === 'SELECT' && p.multiple) {
+                const vals = [];
+                for (const o of Array.from(p.options)) { if (o.selected) vals.push(o.value); }
+                v = vals;
+              } else {
+                v = p.value;
+                // If a select is temporarily unselected (selectedIndex=-1),
+                // default to its first option rather than serializing "".
+                try {
+                  if (p.tagName === 'SELECT' && (v === '' || v === null || v === undefined) && typeof p.selectedIndex === 'number' && p.selectedIndex < 0) {
+                    const opt0 = (p.options && p.options.length) ? p.options[0] : null;
+                    if (opt0 && opt0.value !== undefined) v = opt0.value;
+                  }
+                } catch (ee) {}
+              }
+              // coerce numeric inputs to numbers when possible
               if (p.type === 'number') { const n = Number(v); rule[k] = Number.isFinite(n) ? n : v; } else { rule[k] = v; }
             } catch (ee) { /* ignore per-param errors */ }
           }
@@ -268,6 +374,76 @@
       }
     } catch (e) { /* ignore */ }
     return out;
+  }
+
+  // --- Validation helpers for trade_filters ---
+  function isTimeStringValid(s) {
+    if (!s) return false;
+    return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s));
+  }
+
+  function showValidationErrors(form, errors) {
+    try {
+      if (!form) return;
+      let box = form.querySelector('#guided-v2-validation-errors');
+      if (!box) {
+        box = el('div', { id: 'guided-v2-validation-errors', class: 'validation-errors' });
+        if (form.firstChild) form.insertBefore(box, form.firstChild);
+        else form.appendChild(box);
+      }
+      box.innerHTML = '';
+      const title = el('div', { class: 'validation-title', text: 'Validation errors:' }); box.appendChild(title);
+      const ul = el('ul');
+      for (const e of (errors || [])) { const li = el('li', { text: e }); ul.appendChild(li); }
+      box.appendChild(ul);
+      try { box.scrollIntoView && box.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    } catch (e) { console.error('showValidationErrors', e); }
+  }
+
+  function removeValidationDisplay(form) {
+    try {
+      if (!form) return;
+      const box = form.querySelector('#guided-v2-validation-errors'); if (box) box.remove();
+    } catch (e) {}
+  }
+
+  function validateAllRules(form) {
+    try {
+      const errs = [];
+      const tradeContainer = document.getElementById('trade-filters');
+      const rules = canonicalSerialize(tradeContainer) || [];
+      for (let i = 0; i < rules.length; i++) {
+        const r = rules[i] || {};
+        const which = `Filter #${i+1} (${r.type || 'unknown'})`;
+        if (!r.type) { errs.push(which + ': missing type'); continue; }
+        switch (r.type) {
+          case 'session_window':
+          case 'blackout_window':
+            if (!isTimeStringValid(r.start_time)) errs.push(which + ': invalid or missing start_time (HH:MM)');
+            if (!isTimeStringValid(r.end_time)) errs.push(which + ': invalid or missing end_time (HH:MM)');
+            if (r.days) {
+              const ds = Array.isArray(r.days) ? r.days : String(r.days).split(',').map(s => s.trim()).filter(Boolean);
+              for (const d of ds) { if (WEEKDAYS.indexOf(d) === -1) errs.push(which + `: invalid weekday '${d}'`); }
+            }
+            if (r.timezone && TIMEZONES.indexOf(r.timezone) === -1) errs.push(which + `: unknown timezone '${r.timezone}'`);
+            break;
+          case 'day_month':
+            if (r.days) {
+              const ds2 = Array.isArray(r.days) ? r.days : String(r.days).split(',').map(s => s.trim()).filter(Boolean);
+              for (const d of ds2) { if (WEEKDAYS.indexOf(d) === -1) errs.push(which + `: invalid weekday '${d}'`); }
+            }
+            if (r.months) {
+              const ms = Array.isArray(r.months) ? r.months : String(r.months).split(',').map(s => s.trim()).filter(Boolean);
+              for (const m of ms) { if (MONTHS.indexOf(m) === -1) errs.push(which + `: invalid month '${m}'`); }
+            }
+            break;
+          default:
+            // custom or unknown types have no validation here
+            break;
+        }
+      }
+      return errs;
+    } catch (e) { return ['validation: internal error']; }
   }
 
   function renderParamsForType(container, section, type, rule) {
@@ -321,6 +497,55 @@
       return;
     }
 
+    // Trade filter parameter UIs
+    if (type === 'session_window') {
+      const start = el('input', { type: 'time', class: 'param', 'data-key': 'start_time', value: (rule && rule.start_time) ? rule.start_time : '00:00' });
+      const end = el('input', { type: 'time', class: 'param', 'data-key': 'end_time', value: (rule && rule.end_time) ? rule.end_time : '23:59' });
+      const days = el('select', { class: 'param', 'data-key': 'days', multiple: 'multiple', size: 4 });
+      for (const d of WEEKDAYS) { const o = el('option', { value: d, text: d }); days.appendChild(o); }
+      // populate selected days if present (accept array or csv)
+      try {
+        const selDays = (rule && rule.days) ? (Array.isArray(rule.days) ? rule.days : String(rule.days).split(',').map(s => s.trim())) : [];
+        for (const opt of Array.from(days.options)) { if (selDays.includes(opt.value)) opt.selected = true; }
+      } catch (e) {}
+      const tz = el('input', { type: 'text', class: 'param', 'data-key': 'timezone', list: 'guided-v2-timezone-datalist', placeholder: '(default / exchange)' });
+      if (rule && rule.timezone) tz.value = rule.timezone;
+      container.appendChild(el('label', { text: 'Start (HH:MM): ' })); container.appendChild(start);
+      container.appendChild(el('label', { text: ' End (HH:MM): ' })); container.appendChild(end);
+      container.appendChild(el('label', { text: ' Days: ' })); container.appendChild(days);
+      container.appendChild(el('label', { text: ' Timezone: ' })); container.appendChild(tz);
+      container.appendChild(el('div', { class: 'muted', html: 'Pick weekdays (multi-select) and optional timezone to interpret times.' }));
+      return;
+    }
+
+    if (type === 'blackout_window') {
+      const start = el('input', { type: 'time', class: 'param', 'data-key': 'start_time', value: (rule && rule.start_time) ? rule.start_time : '00:00' });
+      const end = el('input', { type: 'time', class: 'param', 'data-key': 'end_time', value: (rule && rule.end_time) ? rule.end_time : '00:00' });
+      const days = el('select', { class: 'param', 'data-key': 'days', multiple: 'multiple', size: 4 });
+      for (const d of WEEKDAYS) { const o = el('option', { value: d, text: d }); days.appendChild(o); }
+      try {
+        const selDays = (rule && rule.days) ? (Array.isArray(rule.days) ? rule.days : String(rule.days).split(',').map(s => s.trim())) : [];
+        for (const opt of Array.from(days.options)) { if (selDays.includes(opt.value)) opt.selected = true; }
+      } catch (e) {}
+      const tz = el('input', { type: 'text', class: 'param', 'data-key': 'timezone', list: 'guided-v2-timezone-datalist', placeholder: '(default / exchange)' });
+      if (rule && rule.timezone) tz.value = rule.timezone;
+      container.appendChild(el('label', { text: 'Start (HH:MM): ' })); container.appendChild(start);
+      container.appendChild(el('label', { text: ' End (HH:MM): ' })); container.appendChild(end);
+      container.appendChild(el('label', { text: ' Days: ' })); container.appendChild(days);
+      container.appendChild(el('label', { text: ' Timezone: ' })); container.appendChild(tz);
+      container.appendChild(el('div', { class: 'muted', html: 'Blackout windows disallow entries during the specified times.' }));
+      return;
+    }
+
+    if (type === 'day_month') {
+      const days = el('input', { type: 'text', class: 'param', 'data-key': 'days', placeholder: 'Mon,Tue,Wed', value: (rule && rule.days) ? rule.days : '' });
+      const months = el('input', { type: 'text', class: 'param', 'data-key': 'months', placeholder: 'Jan,Feb', value: (rule && rule.months) ? rule.months : '' });
+      container.appendChild(el('label', { text: 'Days (e.g. Mon,Tue): ' })); container.appendChild(days);
+      container.appendChild(el('label', { text: ' Months (e.g. Jan,Feb): ' })); container.appendChild(months);
+      container.appendChild(el('div', { class: 'muted', html: 'Filter entries by day-of-week and month.' }));
+      return;
+    }
+
     // default: custom DSL
     const ta = el('textarea', { class: 'param', 'data-key': 'custom', rows: 2 });
     if (rule && rule.custom) ta.value = rule.custom;
@@ -333,86 +558,46 @@
     for (const p of paramEls) {
       const key = p.getAttribute('data-key');
       if (!key) continue;
-      if (p.tagName === 'SELECT' || p.tagName === 'INPUT' || p.tagName === 'TEXTAREA') {
-        const val = p.value;
-        if (p.type === 'number') {
-          const n = Number(val);
-          params[key] = Number.isFinite(n) ? n : val;
+      if (p.tagName === 'SELECT') {
+        const sel = p;
+        if (sel.multiple) {
+          const vals = Array.from(sel.selectedOptions).map(o => o.value);
+          params[key] = vals;
         } else {
-          params[key] = val;
+          params[key] = sel.value;
+        }
+      } else if (p.tagName === 'INPUT' || p.tagName === 'TEXTAREA') {
+        if (p.type === 'number') {
+          const n = Number(p.value);
+          params[key] = Number.isFinite(n) ? n : p.value;
+        } else if (p.type === 'checkbox') {
+          params[key] = !!p.checked;
+        } else {
+          params[key] = p.value;
         }
       }
     }
     return params;
   }
 
-  function createRuleRow(section, rule) {
-    const row = el('div', { class: 'card rule-row' });
-    row.dataset.section = section;
-
-    const left = el('div', { class: 'rule-left' });
-    const right = el('div', { class: 'rule-right' });
-
-    const sel = el('select', { class: 'rule-type' });
-    const types = section === 'context' ? contextTypes : (section === 'signal' ? signalTypes : triggerTypes);
-    for (const [v, label] of types) { const o = el('option', { value: v }); o.textContent = label; sel.appendChild(o); }
-    if (rule && rule.type) sel.value = rule.type;
-
-    left.appendChild(el('div', { class: 'rule-row-top' }));
-    left.querySelector('.rule-row-top').appendChild(sel);
-
-    if (section === 'signal' || section === 'trigger') {
-      const tf = el('select', { class: 'rule-tf' }); tf.appendChild(el('option', { value: 'default', text: 'default' })); tf.appendChild(el('option', { value: '1m', text: '1m' })); tf.appendChild(el('option', { value: '5m', text: '5m' })); tf.appendChild(el('option', { value: '15m', text: '15m' })); if (rule && rule.tf) tf.value = rule.tf; left.querySelector('.rule-row-top').appendChild(tf);
-    }
-    // per-rule side selector (both | long | short) for all sections
-    const sideLabel = el('label', { class: 'rule-side-label', text: 'Side: ' });
-    const sideSel = el('select', { class: 'rule-side' });
-    sideSel.title = 'Apply rule to both (default), long-only, or short-only.';
-    sideSel.setAttribute('aria-label', 'Rule side selector');
-    sideSel.appendChild(el('option', { value: 'both', text: 'both' }));
-    sideSel.appendChild(el('option', { value: 'long', text: 'long' }));
-    sideSel.appendChild(el('option', { value: 'short', text: 'short' }));
-    if (rule && rule.side) sideSel.value = String(rule.side);
-    sideLabel.appendChild(sideSel);
-    left.querySelector('.rule-row-top').appendChild(sideLabel);
-
-    const valid = el('input', { type: 'number', class: 'rule-valid', min: 1, placeholder: 'valid_for_bars' });
-    if (rule && rule.valid_for_bars) valid.value = String(rule.valid_for_bars);
-    left.appendChild(valid);
-
-    // params container
-    const params = el('div', { class: 'rule-params' });
-    renderParamsForType(params, section, (rule && rule.type) ? rule.type : sel.value, rule || {});
-
-    // wire type change to re-render params
-    sel.addEventListener('change', () => {
-      renderParamsForType(params, section, sel.value, {});
-      // commit entire section to state after change
-      commitSectionFromDOM(section);
-    });
-
-    // update on param changes
-    params.addEventListener('input', () => commitSectionFromDOM(section));
-    params.addEventListener('change', () => commitSectionFromDOM(section));
-
-    // remove button
-    const remove = el('button', { type: 'button', class: 'rule-remove' }); remove.textContent = 'Remove';
-    remove.addEventListener('click', () => { row.remove(); commitSectionFromDOM(section); });
-
-    right.appendChild(params);
-    right.appendChild(remove);
-
-    row.appendChild(left); row.appendChild(right);
-
-    return row;
-  }
+  // Legacy `createRuleRow` removed — require the full `ruleRow` renderer.
+  // Intentionally do not provide a fallback here so missing renderer
+  // will surface errors during testing/deployment.
 
   function renderRulesInto(container, rules, section) {
     if (!container) return;
     container.innerHTML = '';
+    // Use the canonical `ruleRow` renderer when available. Attempt to
+    // resolve from the local binding first, then `window.ruleRow` as a
+    // fallback. If neither is available, skip inserting rows so we do
+    // not render empty placeholder DIVs that confuse the UI.
+    const renderer = (typeof ruleRow === 'function') ? ruleRow : (typeof window !== 'undefined' && typeof window.ruleRow === 'function' ? window.ruleRow : null);
+    if (!renderer) return;
     for (const r of (rules || [])) {
-      const row = createRuleRow(section, r);
-      container.appendChild(row);
+      try {
+        const row = renderer(section, r);
+        if (row) container.appendChild(row);
+      } catch (e) { /* skip faulty render */ }
     }
   }
 
@@ -438,18 +623,196 @@
 
   function commitSectionFromDOM(section) {
     try {
-      const container = document.getElementById(section + '-rules');
-      if (!container || !window.GuidedBuilderV2State) return;
+      const sec = String(section || '');
+      const stateKey = (sec === 'trade_filters') ? 'trade_filters' : (sec + '_rules');
+      const hiddenId = (sec === 'trade_filters') ? 'trade_filters_json' : (stateKey + '_json');
+      // Support container ids using either underscore or hyphen (e.g.
+      // `trade_filters` -> `trade-filters`) to remain tolerant to
+      // template changes where the DOM id may use dashes.
+      // Resolve the container deterministically. Historically there was
+      // inconsistency between `trade_filters` (internal section name)
+      // and the DOM id `trade-filters`. Prefer explicit mapping for the
+      // `trade_filters` section to avoid races where the wrong id is
+      // probed and an empty state causes a subsequent re-render to
+      // wipe user-added rows.
+      let container = null;
+      try {
+        if (String(section) === 'trade_filters') {
+          container = document.getElementById('trade-filters') || document.getElementById('trade_filters') || document.getElementById('trade-filters-rules') || document.getElementById('trade_filters-rules');
+        } else {
+          const candidates = [section + '-rules', String(section).replace(/_/g, '-') + '-rules', String(section).replace(/_/g, '-'), section];
+          for (const id of candidates) {
+            try { const el = document.getElementById(id); if (el) { container = el; break; } } catch (e) {}
+          }
+        }
+      } catch (e) { container = null; }
+      if (!container) return;
       const rules = canonicalSerialize(container);
-      window.GuidedBuilderV2State.set(section + '_rules', rules);
+      try {
+        if (window.GuidedBuilderV2State) window.GuidedBuilderV2State.set(stateKey, rules);
+      } catch (e) { console.error('commitSectionFromDOM state set failed', e); }
+      try { if (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.flush === 'function') { window.GuidedBuilderV2State.flush(); } } catch (e) {}
+      // Always update the corresponding hidden input as a fallback so
+      // non-state code paths (or tests) observe the latest DOM immediately.
+      try {
+        const formEl = document.querySelector('form[action="/create-strategy-guided/step3"]') || document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
+        if (formEl) {
+          ensureHidden(formEl, hiddenId);
+          writeHiddenStamped(formEl, hiddenId, JSON.stringify(rules), 'commit-dom');
+        }
+      } catch (e) { /* best-effort */ }
     } catch (e) { console.error('commitSectionFromDOM', e); }
   }
+
+  // Expose a narrow commit helper for other renderer variants in this file.
+  // Some modules run in separate IIFE scopes and cannot reference this
+  // function directly, but they still need to commit deletes/adds to the
+  // state manager so rows don't get re-rendered back.
+  try {
+    if (typeof window !== 'undefined') {
+      window.__guided_v2_commitSectionFromDOM = commitSectionFromDOM;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Global capture-phase remove wiring.
+  // Why: the advanced renderer attaches per-row Remove handlers, but a
+  // focus/blur-triggered re-render can replace the row synchronously during
+  // pointer/click interactions. That can cause the Remove handler to act on a
+  // stale node reference and then commit a DOM that still contains the rule.
+  // Installing a capture-phase handler at document level ensures we remove the
+  // *currently clicked* row and commit before blur/rerender handlers run.
+  function wireGlobalRemoveCapture() {
+    try {
+      if (typeof document === 'undefined' || !document || !document.addEventListener) return;
+      const root = document.documentElement || document.body;
+      if (!root || !root.dataset) return;
+      if (root.dataset.guidedV2GlobalRemoveCapture === '1') return;
+      root.dataset.guidedV2GlobalRemoveCapture = '1';
+
+      const allowedContainerSelector = '#context-rules, #signal-rules, #trigger-rules, #trade-filters, #trade_filters, #trade-filters-rules, #trade_filters-rules';
+
+      function inferSection(row, container) {
+        try {
+          const ds = row && row.getAttribute ? row.getAttribute('data-section') : '';
+          if (ds) return String(ds);
+        } catch (e) {}
+        try {
+          const id = container && container.id ? String(container.id) : '';
+          if (id === 'context-rules' || id === 'context_rules') return 'context';
+          if (id === 'signal-rules' || id === 'signal_rules') return 'signal';
+          if (id === 'trigger-rules' || id === 'trigger_rules') return 'trigger';
+          if (id.indexOf('trade') !== -1) return 'trade_filters';
+        } catch (e) {}
+        return '';
+      }
+
+      function isRemoveControl(btn) {
+        try {
+          if (!btn) return false;
+          const cls = btn.classList;
+          const isRemoveClass = !!(cls && cls.contains && cls.contains('rule-remove'));
+          const isDangerClass = !!(cls && cls.contains && cls.contains('danger'));
+          const txt = ((btn.textContent || '').trim().toLowerCase());
+          const aria = (((btn.getAttribute && btn.getAttribute('aria-label')) || '').trim().toLowerCase());
+          const dataAction = (((btn.getAttribute && btn.getAttribute('data-action')) || '').trim().toLowerCase());
+          const isRemoveText = txt === 'remove';
+          const isRemoveAria = aria === 'remove';
+          const isRemoveAction = dataAction === 'remove' || dataAction === 'delete';
+          // Require either an explicit remove marker or the exact word
+          // "remove" to avoid catching other danger buttons.
+          return (isRemoveClass || isRemoveAction || isRemoveText || isRemoveAria) && (isDangerClass || isRemoveText || isRemoveAria || isRemoveAction);
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function handleRemove(ev) {
+        try {
+          const tgt = ev && ev.target && ev.target.closest ? ev.target.closest('button, a, [role="button"]') : null;
+          if (!tgt) return;
+          if (!isRemoveControl(tgt)) return;
+
+          const row = tgt.closest ? tgt.closest('.rule-row') : null;
+          if (!row) return;
+
+          const container = row.closest ? row.closest(allowedContainerSelector) : null;
+          if (!container) return;
+
+          // Capture a stable address for the row before any blur-triggered
+          // handlers can replace/move DOM nodes. We'll attempt immediate
+          // removal, and also a deferred removal that re-queries the
+          // container to handle cases where the row node was replaced.
+          const section = inferSection(row, container);
+          let rowIndex = -1;
+          try {
+            const rows = Array.from(container.querySelectorAll('.rule-row'));
+            rowIndex = rows.indexOf(row);
+          } catch (e) { rowIndex = -1; }
+
+          // Prevent blur/click handlers from racing and re-rendering the row
+          // before we commit the removal.
+          try { ev.preventDefault && ev.preventDefault(); } catch (e) {}
+          try { ev.stopImmediatePropagation && ev.stopImmediatePropagation(); } catch (e) { try { ev.stopPropagation && ev.stopPropagation(); } catch (ee) {} }
+
+          const commitNow = () => {
+            try {
+              const commitFn = (typeof window !== 'undefined' && typeof window.__guided_v2_commitSectionFromDOM === 'function') ? window.__guided_v2_commitSectionFromDOM : null;
+              if (commitFn && section) commitFn(section);
+            } catch (e) {}
+          };
+
+          const removeRowNode = (node) => {
+            try { if (node && node.remove) { node.remove(); return true; } } catch (e) {}
+            try { if (node && node.parentNode && node.parentNode.removeChild) { node.parentNode.removeChild(node); return true; } } catch (e) {}
+            return false;
+          };
+
+          // Immediate attempt (works when the row wasn't replaced).
+          try { removeRowNode(row); } catch (e) {}
+          commitNow();
+
+          // Deferred attempt: after blur/focusout handlers have run, the row
+          // may have been replaced. Remove by index from the current DOM.
+          const deferred = () => {
+            try {
+              if (!section) return;
+              let container2 = null;
+              if (section === 'trade_filters') {
+                container2 = document.getElementById('trade-filters') || document.getElementById('trade_filters') || document.getElementById('trade-filters-rules') || document.getElementById('trade_filters-rules');
+              } else {
+                container2 = document.getElementById(section + '-rules') || document.getElementById(String(section).replace(/_/g, '-') + '-rules') || document.getElementById(String(section).replace(/_/g, '-')) || document.getElementById(section);
+              }
+              if (!container2) return;
+              const rows2 = Array.from(container2.querySelectorAll('.rule-row'));
+              if (rows2.length === 0) return;
+              const idx = (typeof rowIndex === 'number' && rowIndex >= 0) ? rowIndex : 0;
+              const candidate = rows2[idx] || rows2[0];
+              removeRowNode(candidate);
+              commitNow();
+            } catch (e) {}
+          };
+          try { setTimeout(deferred, 0); } catch (e) {}
+          try { if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => { try { deferred(); } catch (e) {} }); } catch (e) {}
+        } catch (e) {}
+      }
+
+      // pointerdown/mousedown happens before focus shifts, reducing blur races.
+      document.addEventListener('pointerdown', handleRemove, true);
+      document.addEventListener('mousedown', handleRemove, true);
+      document.addEventListener('click', handleRemove, true);
+    } catch (e) {
+      // best-effort
+    }
+  }
+
+  try { wireGlobalRemoveCapture(); } catch (e) {}
 
   function syncHiddenFromState(form, state) {
     try {
       const ctx = ensureHidden(form, 'context_rules_json');
       const sig = ensureHidden(form, 'signal_rules_json');
       const trg = ensureHidden(form, 'trigger_rules_json');
+      const trade = ensureHidden(form, 'trade_filters_json');
       try {
         writeHiddenStamped(form, 'context_rules_json', JSON.stringify((state && state.context_rules) ? state.context_rules : []), 'state-sync');
       } catch (e) { writeHiddenStamped(form, 'context_rules_json', '[]', 'state-sync-fallback'); }
@@ -459,16 +822,20 @@
       try {
         writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify((state && state.trigger_rules) ? state.trigger_rules : []), 'state-sync');
       } catch (e) { writeHiddenStamped(form, 'trigger_rules_json', '[]', 'state-sync-fallback'); }
+      try {
+        writeHiddenStamped(form, 'trade_filters_json', JSON.stringify((state && state.trade_filters) ? state.trade_filters : []), 'state-sync');
+      } catch (e) { writeHiddenStamped(form, 'trade_filters_json', '[]', 'state-sync-fallback'); }
     } catch (e) { console.error('syncHiddenFromState', e); }
   }
 
   // Fallback DOM -> hidden synchronizer used by the minimal/advanced preview path.
-  function syncHidden(form, ctxContainer, sigContainer, trgContainer) {
+  function syncHidden(form, ctxContainer, sigContainer, trgContainer, tradeContainer) {
     try {
       if (!form) return;
       const ctxH = ensureHidden(form, 'context_rules_json');
       const sigH = ensureHidden(form, 'signal_rules_json');
       const trgH = ensureHidden(form, 'trigger_rules_json');
+      const tradeH = ensureHidden(form, 'trade_filters_json');
       try {
         writeHiddenStamped(form, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer)), 'dom-sync');
       } catch (e) { writeHiddenStamped(form, 'context_rules_json', '[]', 'dom-sync-fallback'); }
@@ -478,11 +845,14 @@
       try {
         writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer)), 'dom-sync');
       } catch (e) { writeHiddenStamped(form, 'trigger_rules_json', '[]', 'dom-sync-fallback'); }
+      try {
+        writeHiddenStamped(form, 'trade_filters_json', JSON.stringify(canonicalSerialize(tradeContainer)), 'dom-sync');
+      } catch (e) { writeHiddenStamped(form, 'trade_filters_json', '[]', 'dom-sync-fallback'); }
     } catch (e) { /* best-effort */ }
   }
 
   function init() {
-    const form = document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
+    const form = document.querySelector('form[action="/create-strategy-guided/step3"]') || document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
     if (!form) return;
 
     // Attach inline onsubmit attribute to cover any submit pathway
@@ -515,7 +885,7 @@
             const ctx = document.getElementById('context-rules');
             const sig = document.getElementById('signal-rules');
             const trg = document.getElementById('trigger-rules');
-            syncHidden(f, ctx, sig, trg);
+            syncHidden(f, ctx, sig, trg, document.getElementById('trade-filters'));
           } catch (e) {}
           try { console.log('[guided-debug]', new Date().toISOString(), 'programmatic-sync ->', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
         }
@@ -542,6 +912,9 @@
     try {
       (function installGlobalSubmitHook() {
         try {
+          // Debug-only: this hook can generate extra pre-submit activity.
+          // Keep it disabled in normal operation to avoid duplicate requests.
+          if (!GUIDED_V2_DEBUG) return;
           const proto = HTMLFormElement && HTMLFormElement.prototype;
           if (!proto) return;
           // Avoid installing multiple times
@@ -561,6 +934,7 @@
                 const ctxContainer = f.querySelector ? f.querySelector('#context-rules') : document.getElementById('context-rules');
                 const sigContainer = f.querySelector ? f.querySelector('#signal-rules') : document.getElementById('signal-rules');
                 const trgContainer = f.querySelector ? f.querySelector('#trigger-rules') : document.getElementById('trigger-rules');
+                  const tradeContainer = f.querySelector ? f.querySelector('#trade-filters') : document.getElementById('trade-filters');
                 // Attempt to send the payload via sendBeacon as a guaranteed-before-unload delivery.
                 // Defer beacon/XHR and final hidden-writes until the next animation frames
                 // so the renderer has a chance to apply any pending DOM updates.
@@ -584,7 +958,9 @@
                               const ctxVal = ctxHidden && ctxHidden.value !== undefined ? parseJsonSafe(ctxHidden.value) : canonicalSerialize(ctxContainer);
                               const sigVal = sigHidden && sigHidden.value !== undefined ? parseJsonSafe(sigHidden.value) : canonicalSerialize(sigContainer);
                               const trgVal = trgHidden && trgHidden.value !== undefined ? parseJsonSafe(trgHidden.value) : canonicalSerialize(trgContainer);
-                              const payload = { draft_id: draftId, context_rules: ctxVal, signal_rules: sigVal, trigger_rules: trgVal };
+                              const tradeHidden = f.querySelector && f.querySelector('#trade_filters_json');
+                              const tradeVal = tradeHidden && tradeHidden.value !== undefined ? parseJsonSafe(tradeHidden.value) : canonicalSerialize(tradeContainer);
+                              const payload = { draft_id: draftId, context_rules: ctxVal, signal_rules: sigVal, trigger_rules: trgVal, trade_filters: tradeVal };
                               const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
                               beaconOk = !!navigator.sendBeacon(url, blob);
                               try { console.log('[guided-debug] sendBeacon ->', beaconOk, url, { ctxLen: JSON.stringify(ctxVal).length, sigLen: JSON.stringify(sigVal).length, trgLen: JSON.stringify(trgVal).length }); } catch (e) {}
@@ -639,6 +1015,7 @@
                           writeHiddenStamped(f, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer)), 'final-pre-submit');
                           writeHiddenStamped(f, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer)), 'final-pre-submit');
                           writeHiddenStamped(f, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer)), 'final-pre-submit');
+                          try { writeHiddenStamped(f, 'trade_filters_json', JSON.stringify(canonicalSerialize(document.getElementById('trade-filters'))), 'final-pre-submit'); } catch (e) {}
                           try { if (typeof cb === 'function') cb(); } catch (e) {}
                         } catch (enne) { try { console.log('[guided-debug] final-pre-submit beacon/xhr error', enne && enne.message); } catch (e) {} }
                       }, 0);
@@ -701,7 +1078,7 @@
           for (const n of Array.from(m.addedNodes || [])) {
             try {
               if (!(n instanceof HTMLElement)) continue;
-              const newForm = n.querySelector && n.querySelector('form[action="/create-strategy-guided/step4"]') || (n.id === 'guided_step4_form' ? n : null);
+              const newForm = (n.querySelector && (n.querySelector('form[action="/create-strategy-guided/step3"]') || n.querySelector('form[action="/create-strategy-guided/step4"]'))) || (n.id === 'guided_step4_form' ? n : null);
               if (newForm) {
                 (function bindAgain(f) {
                   try {
@@ -711,7 +1088,7 @@
                     // reuse same doSync logic
                     const doSync = function () {
                       try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(f, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); } } catch (e) {}
-                      try { syncHidden(f, document.getElementById('context-rules'), document.getElementById('signal-rules'), document.getElementById('trigger-rules')); } catch (e) {}
+                      try { syncHidden(f, document.getElementById('context-rules'), document.getElementById('signal-rules'), document.getElementById('trigger-rules'), document.getElementById('trade-filters')); } catch (e) {}
                     };
                     if (origRequestSubmit) f.requestSubmit = function (submitter) { try { doSync(); } catch (e) {} ; return origRequestSubmit(submitter); };
                     if (origSubmit) f.submit = function () { try { doSync(); } catch (e) {} ; return origSubmit(); };
@@ -735,14 +1112,27 @@
           const ctxContainer2 = document.getElementById('context-rules');
           const sigContainer2 = document.getElementById('signal-rules');
           const trgContainer2 = document.getElementById('trigger-rules');
+          const tradeContainer2 = document.getElementById('trade-filters');
           let ctxH = document.getElementById('context_rules_json'); if (!ctxH) ctxH = ensureHidden(form, 'context_rules_json');
           let sigH = document.getElementById('signal_rules_json'); if (!sigH) sigH = ensureHidden(form, 'signal_rules_json');
           let trgH = document.getElementById('trigger_rules_json'); if (!trgH) trgH = ensureHidden(form, 'trigger_rules_json');
+          let tradeH = document.getElementById('trade_filters_json'); if (!tradeH) tradeH = ensureHidden(form, 'trade_filters_json');
               try {
                 // use stamped writes so we can trace who last changed the inputs
                 writeHiddenStamped(form, 'context_rules_json', JSON.stringify(canonicalSerialize(ctxContainer2)), 'capture-submit-dom');
                 writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(canonicalSerialize(sigContainer2)), 'capture-submit-dom');
                 writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(canonicalSerialize(trgContainer2)), 'capture-submit-dom');
+                writeHiddenStamped(form, 'trade_filters_json', JSON.stringify(canonicalSerialize(tradeContainer2)), 'capture-submit-dom');
+                // validate rules and halt submission if issues found
+                const validationErrors = validateAllRules(form);
+                if (validationErrors && validationErrors.length > 0) {
+                  try { writeHiddenStamped(form, 'guided_v2_validation_errors', JSON.stringify(validationErrors), 'capture-submit-validate'); } catch (e) {}
+                  try { showValidationErrors(form, validationErrors); } catch (e) {}
+                  try { ev.preventDefault(); ev.stopImmediatePropagation && ev.stopImmediatePropagation(); } catch (e) {}
+                  return;
+                } else {
+                  try { removeValidationDisplay(form); } catch (e) {}
+                }
               } catch (e) {
                 // best-effort: fall back to state if available
                 try { if (window.GuidedBuilderV2State && window.GuidedBuilderV2State.raw) { syncHiddenFromState(form, window.GuidedBuilderV2State.raw()); } } catch (e2) {}
@@ -757,11 +1147,12 @@
         const evt = new Event('submit', { bubbles: true, cancelable: true });
         const notCanceled = f.dispatchEvent(evt);
         if (notCanceled) {
-          // call native submit
-          HTMLFormElement.prototype.submit.call(f);
+          try { window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(f); } catch (e) {}
+          try { f.submit(); } catch (e) {}
         }
       } catch (e) {
-        try { HTMLFormElement.prototype.submit.call(f); } catch (e2) { /* ignore */ }
+        try { window.__guided_v2_ensure_submit && window.__guided_v2_ensure_submit(f); } catch (e2) {}
+        try { f.submit(); } catch (e2) { /* ignore */ }
       }
     }
 
@@ -778,7 +1169,7 @@
     // detailed UI metadata can force the full renderer to initialize.
     if (advancedPreviewBody && !window.guidedBuilderV2PreferFullRenderer) {
       // ensure hidden inputs exist
-      ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json');
+      ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json'); ensureHidden(form, 'trade_filters_json');
       // minimal submit sync to preserve draft/hidden JSON when submitting from advanced UI
       form.addEventListener('submit', () => {
         try {
@@ -791,7 +1182,7 @@
             const ctxContainer = document.getElementById('context-rules');
             const sigContainer = document.getElementById('signal-rules');
             const trgContainer = document.getElementById('trigger-rules');
-            syncHidden(form, ctxContainer, sigContainer, trgContainer);
+            syncHidden(form, ctxContainer, sigContainer, trgContainer, document.getElementById('trade-filters'));
           }
           // Additionally, always attempt to sync from DOM rule containers
           // to cover cases where rules exist in the DOM but weren't yet
@@ -800,149 +1191,26 @@
             const ctxContainer2 = document.getElementById('context-rules');
             const sigContainer2 = document.getElementById('signal-rules');
             const trgContainer2 = document.getElementById('trigger-rules');
-            syncHidden(form, ctxContainer2, sigContainer2, trgContainer2);
+            syncHidden(form, ctxContainer2, sigContainer2, trgContainer2, document.getElementById('trade-filters'));
             try { console.log('[guided-debug] minimal submit sync ->', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
           } catch (e) { /* best-effort */ }
         } catch (e) { console.error('submit sync (minimal) failed', e); }
       });
-      // Also intercept the Review button click to force immediate DOM->hidden sync
-      try {
-        const submitBtn = form.querySelector('button[type="submit"]');
-        if (submitBtn && !submitBtn.dataset.guidedV2ClickWired) {
-          // Ensure hidden inputs are populated as early as possible across input types
-          const ensureHiddenPopulated = () => {
-              try {
-              commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger');
-              if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
-              // fallback DOM serialization (stamped)
-              try {
-                writeHiddenStamped(form, 'context_rules_json', JSON.stringify(canonicalSerialize(document.getElementById('context-rules'))), 'submit-btn-fallback');
-                writeHiddenStamped(form, 'signal_rules_json', JSON.stringify(canonicalSerialize(document.getElementById('signal-rules'))), 'submit-btn-fallback');
-                writeHiddenStamped(form, 'trigger_rules_json', JSON.stringify(canonicalSerialize(document.getElementById('trigger-rules'))), 'submit-btn-fallback');
-              } catch (e) { /* best-effort */ }
-            } catch (e) { console.error('ensureHiddenPopulated failed', e); }
-          };
+      // NOTE: do not intercept submit clicks here. The capture-phase submit
+      // handler plus `__guided_v2_ensure_submit` cover DOM->hidden sync.
 
-          // Best-effort beacon/xhr to ensure server receives serialized payload
-          const tryBeaconFromEnsure = () => {
-            try {
-              const ctxC = document.getElementById('context-rules');
-              const sigC = document.getElementById('signal-rules');
-              const trgC = document.getElementById('trigger-rules');
-              const url = (window.__guided_v2_debug_beacon_url || (form.action || window.location.href));
-              // Wait for next frames and flush state so DOM/state have settled
-              try {
-                afterNextFrame(function () {
-                  // One more microtask tick after rAF to allow any microtask DOM updates
-                  Promise.resolve().then(function () {
-                    try { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); } } catch (e) {}
-                    try {
-                      let beaconOk = false;
-                      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-                        try {
-                          const fd = new FormData();
-                          const draftEl = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
-                          const did = draftEl ? draftEl.value : (window.__guided_v2_draft_id || '');
-                          fd.append('draft_id', did);
-                          fd.append('context_rules_json', JSON.stringify(canonicalSerialize(ctxC)));
-                          fd.append('signal_rules_json', JSON.stringify(canonicalSerialize(sigC)));
-                          fd.append('trigger_rules_json', JSON.stringify(canonicalSerialize(trgC)));
-                          beaconOk = !!navigator.sendBeacon(url, fd);
-                          try { console.log('[guided-debug] sendBeacon(ensure) ->', beaconOk, url); } catch (e) {}
-                        } catch (be) { try { console.log('[guided-debug] sendBeacon(ensure) failed', be && be.message); } catch (e) {} }
-                      }
-                      if (!beaconOk) {
-                        try {
-                          const params = new URLSearchParams();
-                          const draftEl2 = form.querySelector && (form.querySelector('input[name="draft_id"]') || form.querySelector('#draft_id'));
-                          const did2 = draftEl2 ? draftEl2.value : (window.__guided_v2_draft_id || '');
-                          params.append('draft_id', did2);
-                          params.append('context_rules_json', JSON.stringify(canonicalSerialize(ctxC)));
-                          params.append('signal_rules_json', JSON.stringify(canonicalSerialize(sigC)));
-                          params.append('trigger_rules_json', JSON.stringify(canonicalSerialize(trgC)));
-                          try { console.log('[guided-debug] ensure-syncXHR ->', url); } catch (e) {}
-                          const xhr = new XMLHttpRequest(); xhr.open('POST', url, false); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8'); xhr.send(params.toString());
-                          try { console.log('[guided-debug] ensure-syncXHR status ->', xhr.status); } catch (e) {}
-                        } catch (sx) { try { console.log('[guided-debug] ensure-syncXHR failed', sx && sx.message); } catch (e) {} }
-                      }
-                    } catch (eee) { try { console.log('[guided-debug] tryBeaconFromEnsure error', eee && eee.message); } catch (e) {} }
-                  }).catch(function (err) { try { console.log('[guided-debug] tryBeaconFromEnsure microtask error', err && err.message); } catch (e) {} });
-                });
-              } catch (e) { try { console.log('[guided-debug] tryBeaconFromEnsure scheduling error', e && e.message); } catch (e2) {} }
-            } catch (eee) { try { console.log('[guided-debug] tryBeaconFromEnsure error', eee && eee.message); } catch (e) {} }
-          };
+    }
 
-          // Wire pointer/touch/click to populate as early as possible
-          // On pointer/touch start, populate hidden inputs and attempt an early
-          // beacon, but do NOT mark `__guided_v2_in_submit` yet — that flag is
-          // authoritative for blocking non-final writers and must be set only
-          // once final write is imminent.
-          submitBtn.addEventListener('pointerdown', (ev) => { try { ensureHiddenPopulated(); try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} });
-          submitBtn.addEventListener('touchstart', (ev) => { try { ensureHiddenPopulated(); try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) {} }, { passive: true });
-          submitBtn.addEventListener('click', (ev) => {
-            // prevent duplicate handling if another handler already started submission
-            if (form.dataset.guidedV2Submitting) return;
-            form.dataset.guidedV2Submitting = '1';
-            ev.preventDefault();
-            try {
-              // populate hidden inputs (try fast path first) and mark submit-in-progress
-              try { ensureHiddenPopulated(); try { tryBeaconFromEnsure(); } catch (e) {} } catch (e) { /* ignore */ }
-            } catch (e) { console.error('submit-button click sync failed', e); }
-            try { console.log('[guided-debug] submit-button click -> hidden', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
-            // proceed with submit via prototype.submit so the overridden
-            // submit (which runs finalSync) executes before native submit
-            try { HTMLFormElement.prototype.submit.call(form); } catch (e) { console.error('form.submit failed', e); }
-            setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
-          });
-              submitBtn.dataset.guidedV2ClickWired = '1';
-            }
-          } catch (e) { /* ignore */ }
-          // NOTE: do not return here — allow the full renderer wiring to run as
-          // well so the page initializes the richer per-type renderer while
-          // retaining the minimal submit-sync handlers above. This prevents
-          // lost-settings bugs when the minimal path fails to hydrate complex
-          // rule parameters before submit.
-        }
-
-    // Capture-phase submit handler: ensure we serialize DOM -> hidden inputs
-    try {
-      // Robust capture-phase submit: prevent default, populate hidden inputs,
-      // then perform native submit to avoid other handlers overwriting values.
-      form.addEventListener(
-        'submit',
-        function (ev) {
-          try {
-            ev.preventDefault();
-            // populate hidden inputs synchronously
-            try {
-              // prefer state flush
-              if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
-            } catch (e) {}
-            try {
-              const ctxContainer2 = document.getElementById('context-rules');
-              const sigContainer2 = document.getElementById('signal-rules');
-              const trgContainer2 = document.getElementById('trigger-rules');
-              const ctxH = document.getElementById('context_rules_json');
-              const sigH = document.getElementById('signal_rules_json');
-              const trgH = document.getElementById('trigger_rules_json');
-              if (ctxH) ctxH.value = JSON.stringify(canonicalSerialize(ctxContainer2));
-              if (sigH) sigH.value = JSON.stringify(canonicalSerialize(sigContainer2));
-              if (trgH) trgH.value = JSON.stringify(canonicalSerialize(trgContainer2));
-            } catch (e) {}
-            try { console.log('[guided-debug] capture-submit -> hidden', { ctx: (document.getElementById('context_rules_json')||{}).value, sig: (document.getElementById('signal_rules_json')||{}).value, trg: (document.getElementById('trigger_rules_json')||{}).value }); } catch (e) {}
-            // perform native submit (bypass other submit handlers)
-            setTimeout(function () { try { HTMLFormElement.prototype.submit.call(form); } catch (e) { try { performSubmitWithEvents(form); } catch (e2) {} } }, 0);
-          } catch (e) { /* best-effort */ }
-        },
-        true
-      );
-    } catch (e) { /* ignore */ }
+    // NOTE: removed a second capture-phase submit handler which prevented
+    // default and performed a native submit. That handler caused duplicate
+    // POSTs and could surface 422s in the console.
 
     const ctxContainer = document.getElementById('context-rules');
     const sigContainer = document.getElementById('signal-rules');
     const trgContainer = document.getElementById('trigger-rules');
+    const tradeContainer = document.getElementById('trade-filters') || document.getElementById('trade_filters') || document.getElementById('trade-filters-rules') || document.getElementById('trade_filters-rules');
 
-    ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json');
+    ensureHidden(form, 'context_rules_json'); ensureHidden(form, 'signal_rules_json'); ensureHidden(form, 'trigger_rules_json'); ensureHidden(form, 'trade_filters_json');
 
     // initial load: prefer state if present, else hidden inputs
     const initialState = (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.get === 'function') ? window.GuidedBuilderV2State.get() : null;
@@ -953,6 +1221,7 @@
       initial.context_rules = parseJsonSafe(form.querySelector('#context_rules_json')?.value);
       initial.signal_rules = parseJsonSafe(form.querySelector('#signal_rules_json')?.value);
       initial.trigger_rules = parseJsonSafe(form.querySelector('#trigger_rules_json')?.value);
+      initial.trade_filters = parseJsonSafe(form.querySelector('#trade_filters_json')?.value);
     }
 
     if (window.GuidedBuilderV2State && typeof window.GuidedBuilderV2State.load === 'function') {
@@ -975,6 +1244,9 @@
           if (!(active && trgContainer && trgContainer.contains(active))) {
             renderRulesInto(trgContainer, s.trigger_rules || [], 'trigger');
           }
+          if (!(active && tradeContainer && tradeContainer.contains(active))) {
+            renderRulesInto(tradeContainer, s.trade_filters || [], 'trade_filters');
+          }
           syncHiddenFromState(form, s);
           // If a submit button click has started (pending submit), ensure the
           // authoritative final-pre-submit writes happen immediately so the
@@ -989,21 +1261,82 @@
       });
     }
 
-    // wire add buttons
+    // wire add buttons. Use a small retry strategy when the canonical
+    // `ruleRow` renderer may not yet be bound in the execution scope to
+    // avoid inserting empty placeholder DIVs.
+    function getRenderer() {
+      if (typeof ruleRow === 'function') return ruleRow;
+      if (typeof window !== 'undefined' && typeof window.ruleRow === 'function') return window.ruleRow;
+      return null;
+    }
+
+    function appendRowWithRetry(section, container, maxAttempts = 8) {
+      let attempts = 0;
+      const tryAppend = () => {
+        attempts += 1;
+        const renderer = getRenderer();
+        if (renderer) {
+          try {
+            const row = renderer(section, {});
+            if (row && container) container.appendChild(row);
+            // Some renderers populate default select values (notably
+            // `select[data-field="type"]`) on the next frame. Commit after
+            // a rAF to avoid serializing transient empty values.
+            try { afterNextFrame(() => { try { commitSectionFromDOM(section); } catch (e) {} }); } catch (e) { try { commitSectionFromDOM(section); } catch (ee) {} }
+            return;
+          } catch (e) { /* fallthrough to retry */ }
+        }
+        if (attempts < maxAttempts) {
+          try { setTimeout(tryAppend, 60 * attempts); } catch (e) {}
+        } else {
+          // give up silently to avoid UI noise; do not append empty nodes
+        }
+      };
+      tryAppend();
+    }
+
+    // If another script has already wired the add buttons, our per-button
+    // wiring below may intentionally skip (dataset guard) to avoid
+    // duplicating inserts. In that case, the other handler may append DOM
+    // rows without committing them into `GuidedBuilderV2State`, so the next
+    // state-driven re-render can wipe the DOM. Install a small shim that
+    // commits from DOM after any add click, regardless of who inserted.
+    try {
+      if (form && form.dataset && !form.dataset.guidedV2AddCommitShim) {
+        form.dataset.guidedV2AddCommitShim = '1';
+        form.addEventListener('click', (ev) => {
+          try {
+            const t = ev && ev.target && ev.target.closest ? ev.target.closest('#add-context, #add-signal, #add-trigger, #add-trade-filter') : null;
+            if (!t || !t.id) return;
+            const section = (t.id === 'add-context') ? 'context' : (t.id === 'add-signal') ? 'signal' : (t.id === 'add-trigger') ? 'trigger' : (t.id === 'add-trade-filter') ? 'trade_filters' : null;
+            if (!section) return;
+            // Defer to allow the actual add handler (whoever owns it) to
+            // append the row first and populate default values.
+            try { afterNextFrame(() => { try { commitSectionFromDOM(section); } catch (e) {} }); } catch (e) { setTimeout(() => { try { commitSectionFromDOM(section); } catch (ee) {} }, 0); }
+          } catch (e) {}
+        }, false);
+      }
+    } catch (e) {}
+
     const addCtx = document.getElementById('add-context');
     const addSig = document.getElementById('add-signal');
     const addTrg = document.getElementById('add-trigger');
     if (addCtx && ctxContainer && !addCtx.dataset.guidedV2Wired) {
-      addCtx.addEventListener('click', (ev) => { ev.preventDefault(); ctxContainer.appendChild(createRuleRow('context', {})); commitSectionFromDOM('context'); });
+      addCtx.addEventListener('click', (ev) => { try { ev.preventDefault(); } catch (e) {} ; appendRowWithRetry('context', ctxContainer); });
       addCtx.dataset.guidedV2Wired = '1';
     }
     if (addSig && sigContainer && !addSig.dataset.guidedV2Wired) {
-      addSig.addEventListener('click', (ev) => { ev.preventDefault(); sigContainer.appendChild(createRuleRow('signal', {})); commitSectionFromDOM('signal'); });
+      addSig.addEventListener('click', (ev) => { try { ev.preventDefault(); } catch (e) {} ; appendRowWithRetry('signal', sigContainer); });
       addSig.dataset.guidedV2Wired = '1';
     }
     if (addTrg && trgContainer && !addTrg.dataset.guidedV2Wired) {
-      addTrg.addEventListener('click', (ev) => { ev.preventDefault(); trgContainer.appendChild(createRuleRow('trigger', {})); commitSectionFromDOM('trigger'); });
+      addTrg.addEventListener('click', (ev) => { try { ev.preventDefault(); } catch (e) {} ; appendRowWithRetry('trigger', trgContainer); });
       addTrg.dataset.guidedV2Wired = '1';
+    }
+    const addTrade = document.getElementById('add-trade-filter');
+    if (addTrade && tradeContainer && !addTrade.dataset.guidedV2Wired) {
+      addTrade.addEventListener('click', (ev) => { try { ev.preventDefault(); } catch (e) {} ; appendRowWithRetry('trade_filters', tradeContainer); });
+      addTrade.dataset.guidedV2Wired = '1';
     }
 
     // edits/removes: delegate to container and commit on change
@@ -1011,7 +1344,30 @@
       if (!container) return;
       container.addEventListener('input', () => commitSectionFromDOM(section));
       container.addEventListener('change', () => commitSectionFromDOM(section));
-      container.addEventListener('click', (ev) => { if (ev.target && ev.target.classList && ev.target.classList.contains('rule-remove')) commitSectionFromDOM(section); });
+      container.addEventListener('click', (ev) => {
+        try {
+          // Normalize target to the nearest button in case inner elements
+          // (icons/spans) are clicked. Accept either explicit
+          // `.rule-remove` marker or buttons whose visible text is
+          // "Remove" to handle alternate renderer variants.
+          const tgt = ev.target && ev.target.closest ? ev.target.closest('button, a, [role="button"]') : ev.target;
+          if (!tgt) return;
+          const isRemoveClass = tgt.classList && tgt.classList.contains && tgt.classList.contains('rule-remove');
+          const isDangerClass = tgt.classList && tgt.classList.contains && tgt.classList.contains('danger');
+          const isRemoveText = (tgt.textContent || '').trim().toLowerCase() === 'remove';
+          const isRemoveAria = ((tgt.getAttribute && tgt.getAttribute('aria-label')) || '').trim().toLowerCase() === 'remove';
+          if (isRemoveClass || isDangerClass || isRemoveText || isRemoveAria) {
+            try { ev && ev.preventDefault && ev.preventDefault(); } catch (e) {}
+            try {
+              const row = (tgt && tgt.closest) ? (tgt.closest('.rule-row') || tgt.closest('.card')) : null;
+              if (row) {
+                try { row.remove(); } catch (e) { try { row.parentNode && row.parentNode.removeChild && row.parentNode.removeChild(row); } catch (ee) {} }
+              }
+            } catch (e) {}
+            commitSectionFromDOM(section);
+          }
+        } catch (e) {}
+      });
       // On focusout (blur from any element within the container), ensure
       // the latest edits are committed to the state immediately so a
       // subsequent re-render doesn't overwrite them.
@@ -1019,40 +1375,29 @@
         try { commitSectionFromDOM(section); } catch (e) { console.error('focusout commit failed', e); }
       });
     };
-    delegateEvents(ctxContainer, 'context'); delegateEvents(sigContainer, 'signal'); delegateEvents(trgContainer, 'trigger');
+    delegateEvents(ctxContainer, 'context'); delegateEvents(sigContainer, 'signal'); delegateEvents(trgContainer, 'trigger'); delegateEvents(tradeContainer, 'trade_filters');
 
     // ensure hidden sync on submit
-    form.addEventListener('submit', () => { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); const s = window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}; syncHiddenFromState(form, s); } else { syncHidden(form, ctxContainer, sigContainer, trgContainer); } });
-    // Also ensure the submit button click forces an immediate sync (best-effort)
-    try {
-      const submitBtn2 = form.querySelector('button[type="submit"]');
-      if (submitBtn2 && !submitBtn2.dataset.guidedV2ClickWired) {
-        submitBtn2.addEventListener('click', (ev) => {
-          if (form.dataset.guidedV2Submitting) return;
-          form.dataset.guidedV2Submitting = '1';
-          ev.preventDefault();
-          try {
-            commitSectionFromDOM('context'); commitSectionFromDOM('signal'); commitSectionFromDOM('trigger');
-            if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); syncHiddenFromState(form, window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}); }
-            try {
-              const ctxH = document.getElementById('context_rules_json'); if (ctxH) ctxH.value = JSON.stringify(canonicalSerialize(document.getElementById('context-rules')));
-              const sigH = document.getElementById('signal_rules_json'); if (sigH) sigH.value = JSON.stringify(canonicalSerialize(document.getElementById('signal-rules')));
-              const trgH = document.getElementById('trigger_rules_json'); if (trgH) trgH.value = JSON.stringify(canonicalSerialize(document.getElementById('trigger-rules')));
-            } catch (e) { /* best-effort */ }
-          } catch (e) { console.error('submit-button click sync failed', e); }
-          try { HTMLFormElement.prototype.submit.call(form); } catch (e) { console.error('form.submit failed', e); }
-          setTimeout(() => { try { delete form.dataset.guidedV2Submitting; } catch (e) {} }, 2000);
-        });
-        submitBtn2.dataset.guidedV2ClickWired = '1';
-      }
-    } catch (e) { /* ignore */ }
+    form.addEventListener('submit', () => { if (window.GuidedBuilderV2State) { window.GuidedBuilderV2State.flush && window.GuidedBuilderV2State.flush(); const s = window.GuidedBuilderV2State.raw ? window.GuidedBuilderV2State.raw() : {}; syncHiddenFromState(form, s); } else { syncHidden(form, ctxContainer, sigContainer, trgContainer, document.getElementById('trade-filters')); } });
+    // NOTE: removed custom submit-button click handler. Rely on the submit
+    // event and `__guided_v2_ensure_submit` for serialization.
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 
+  // NOTE: Removed test-only global API exposure to avoid accidental
+  // reliance on a secondary renderer. Tests should prefer the public
+  // `createRuleRow` function when needed.
+
 })();
+
+// NOTE: Global fallback wiring for the Add Trade Filter button intentionally
+// removed. Trade-filter add buttons are wired within the main `init()`
+// path alongside context/signal/trigger (see the per-section `addTrade`
+// wiring in `init`) so that behavior is consistent and not globally
+// visible across IIFE scopes.
     (function () {
-      const form = document.querySelector('form[action="/create-strategy-guided/step4"]');
+      const form = document.querySelector('form[action="/create-strategy-guided/step3"]') || document.querySelector('form[action="/create-strategy-guided/step4"]') || document.getElementById('guided_step4_form');
       // Feature flags (toggle experimental features safely)
       const FEATURE_FLAG = {
         volume: false,
@@ -1080,9 +1425,11 @@
       const ctxHidden = document.getElementById('context_rules_json');
       const sigHidden = document.getElementById('signal_rules_json');
       const trgHidden = document.getElementById('trigger_rules_json');
+      const tradeHidden = document.getElementById('trade_filters_json');
       const ctxContainer = document.getElementById('context-rules');
       const sigContainer = document.getElementById('signal-rules');
       const trgContainer = document.getElementById('trigger-rules');
+      const tradeContainer = document.getElementById('trade-filters');
       const primaryContextSel = document.getElementById('primary_context_type');
       const maStackBlock = document.getElementById('context_ma_stack_block');
 
@@ -1099,7 +1446,7 @@
           ['atr_spike', 'Volatility: ATR spike'],
           ['structure_breakout_state', 'Structure: Breakout state'],
           ['ma_spread_pct', 'Trend strength: MA spread %'],
-          ['bollinger_context', 'Bollinger (anchor TF)'],
+          ['bollinger_context', 'Bollinger'],
           ['relative_volume', 'Relative Volume (RVOL)'],
           ['volume_osc_increase', 'Volume Oscillator Increase'],
           ['volume_above_ma', 'Volume Above MA'],
@@ -1109,7 +1456,11 @@
         const cur = String(primaryContextSel.value || '').trim();
         primaryContextSel.innerHTML = '';
         for (const [v, label] of opts) {
-          const o = document.createElement('option'); o.value = v; o.textContent = label; primaryContextSel.appendChild(o);
+          const o = document.createElement('option'); o.value = v; o.textContent = label; 
+          if (v === 'bollinger_context') {
+            o.title = 'Uses the Context TF (selected above) for band calculation; this is a higher-timeframe/context filter.';
+          }
+          primaryContextSel.appendChild(o);
         }
         if (cur) primaryContextSel.value = cur;
         else primaryContextSel.value = 'none';
@@ -1224,8 +1575,8 @@
           o.textContent = label;
           tfSel.appendChild(o);
         }
-        // Per-rule TF applies to signals/triggers only (context uses the single Context TF).
-        if (section === 'signal' || section === 'trigger') {
+        // Per-rule TF applies to all sections (signal/trigger/context).
+        if (section === 'signal' || section === 'trigger' || section === 'context') {
           addTfOpt('default', 'TF: Default');
           addTfOpt('1m', 'TF: 1m');
           addTfOpt('5m', 'TF: 5m');
@@ -1246,14 +1597,53 @@
           const o = el('option');
           o.value = value;
           o.textContent = label;
+          if (value === 'bollinger_context') {
+            o.title = 'Uses the Context TF (selected in the form) for band calculation; acts as a higher-timeframe/context filter.';
+          }
           typeSel.appendChild(o);
         }
 
         const removeBtn = el('button', { type: 'button', class: 'danger', text: 'Remove' });
-        removeBtn.addEventListener('click', () => {
-          row.remove();
-          syncHidden();
-          schedule();
+        removeBtn.addEventListener('click', (ev) => {
+          try { ev && ev.stopPropagation && ev.stopPropagation(); ev && ev.preventDefault && ev.preventDefault(); } catch (e) {}
+          try {
+            if (row && (typeof row.isConnected === 'boolean' ? row.isConnected : !!row.parentNode)) {
+              try { row.remove(); } catch (e) { try { row.parentNode && row.parentNode.removeChild && row.parentNode.removeChild(row); } catch (ee) {} }
+            }
+          } catch (e) {}
+          // Commit synchronously after removal to ensure the state manager
+          // reflects the deletion before any subscriber re-renders. This
+          // prevents races where an old state snapshot might re-insert the
+          // removed row. Keep best-effort fallbacks for environments without
+          // `commitSectionFromDOM`.
+          try {
+            const commitFn = (typeof window !== 'undefined' && typeof window.__guided_v2_commitSectionFromDOM === 'function') ? window.__guided_v2_commitSectionFromDOM : null;
+            if (commitFn) {
+              try { commitFn(section); } catch (e) {}
+            } else if (typeof syncHidden === 'function') {
+              // In this renderer scope, `syncHidden` is a local no-arg helper.
+              // Do not call it with the other module's signature.
+              try { syncHidden(); } catch (e) {}
+            }
+            // Best-effort cleanup: remove any empty `.rule-row` elements
+            // that may have been inserted by a transient fallback or
+            // renderer race. Keep this conservative to avoid removing
+            // legitimate rows.
+            try {
+              const parent = row && row.parentNode ? row.parentNode : null;
+              const container = parent || (section === 'trade_filters' ? document.getElementById('trade-filters') : document.getElementById(section + '-rules'));
+              if (container) {
+                const children = Array.from(container.querySelectorAll('.rule-row'));
+                for (const ch of children) {
+                  try {
+                    if (ch && (!ch.innerHTML || String(ch.innerHTML).trim() === '')) {
+                      ch.parentNode && ch.parentNode.removeChild && ch.parentNode.removeChild(ch);
+                    }
+                  } catch (e) {}
+                }
+              }
+            } catch (e) {}
+          } catch (e) {}
         });
 
         left.appendChild(typeSel);
@@ -1269,7 +1659,8 @@
         addSideOpt('short', 'Side: Short');
         sideSel.value = (rule && rule.side) ? String(rule.side) : 'both';
         left.appendChild(sideSel);
-        if (section === 'signal' || section === 'trigger') {
+        // Show per-row TF and "Valid bars" for all sections
+        if (section === 'signal' || section === 'trigger' || section === 'context') {
           left.appendChild(tfSel);
           left.appendChild(validWrap);
         }
@@ -1303,6 +1694,15 @@
           inp.type = 'text';
           inp.setAttribute('data-field', field);
           if (placeholder) inp.placeholder = placeholder;
+          inp.value = value != null ? String(value) : '';
+          parent.appendChild(inp);
+        }
+
+        function inputTime(parent, label, field, value) {
+          parent.appendChild(el('label', { text: label }));
+          const inp = el('input');
+          inp.type = 'time';
+          inp.setAttribute('data-field', field);
           inp.value = value != null ? String(value) : '';
           parent.appendChild(inp);
         }
@@ -1384,7 +1784,7 @@
             inputNumber(b, 'Period', 'length', rule?.length ?? 20, { min: 1 });
             inputNumber(b, 'Std dev (×mult)', 'mult', rule?.mult ?? 2.5, { step: 0.1, min: 0 });
             select(b, 'Mode', 'mode', [['inside', 'Inside band'], ['outside', 'Outside band'], ['near', 'Near band']], rule?.mode || 'inside');
-            b.appendChild(el('div', { class: 'muted', text: 'Bollinger Context: require anchor TF price membership relative to Bollinger bands.' }));
+            b.appendChild(el('div', { class: 'muted', html: 'Bollinger Context: require the <strong>Context TF</strong> price membership relative to Bollinger bands. Uses the Context TF configured above.' }));
           });
           block('structure_breakout_state', (b) => {
             inputNumber(b, 'Lookback length', 'length', rule?.length ?? 20, { min: 1 });
@@ -1516,6 +1916,88 @@
           });
         }
 
+        // Trade filter blocks
+        if (section === 'trade_filters') {
+          block('session_window', (b) => {
+            inputTime(b, 'Start (HH:MM)', 'start_time', rule?.start_time ?? '00:00');
+            inputTime(b, 'End (HH:MM)', 'end_time', rule?.end_time ?? '23:59');
+            inputText(b, 'Days (csv; optional)', 'days', rule?.days ?? '', 'Mon,Tue,Wed,Thu,Fri');
+            // keep timezone as text + datalist (shared datalist is created earlier in the file)
+            b.appendChild(el('label', { text: 'Timezone (optional)' }));
+            const tz = el('input', { type: 'text', placeholder: '(default / exchange)' });
+            tz.setAttribute('data-field', 'timezone');
+            try { tz.setAttribute('list', 'guided-v2-timezone-datalist'); } catch (e) {}
+            tz.value = rule?.timezone ?? '';
+            b.appendChild(tz);
+          });
+
+          block('blackout_window', (b) => {
+            inputTime(b, 'Start (HH:MM)', 'start_time', rule?.start_time ?? '00:00');
+            inputTime(b, 'End (HH:MM)', 'end_time', rule?.end_time ?? '00:00');
+            inputText(b, 'Days (csv; optional)', 'days', rule?.days ?? '', 'Mon,Tue,Wed,Thu,Fri');
+            b.appendChild(el('label', { text: 'Timezone (optional)' }));
+            const tz = el('input', { type: 'text', placeholder: '(default / exchange)' });
+            tz.setAttribute('data-field', 'timezone');
+            try { tz.setAttribute('list', 'guided-v2-timezone-datalist'); } catch (e) {}
+            tz.value = rule?.timezone ?? '';
+            b.appendChild(tz);
+          });
+
+          block('max_trades_per_day', (b) => {
+            inputNumber(b, 'Max trades per day', 'limit', rule?.limit ?? 1, { min: 0 });
+          });
+
+          block('max_exposure', (b) => {
+            inputNumber(b, 'Max exposure', 'amount', rule?.amount ?? 1000, { min: 0, step: 0.01 });
+            inputText(b, 'Currency', 'currency', rule?.currency ?? 'USD', 'USD');
+          });
+
+          block('news_buffer', (b) => {
+            inputNumber(b, 'Buffer minutes', 'minutes', rule?.minutes ?? 60, { min: 0, step: 1 });
+            inputText(b, 'Sources (optional)', 'sources', rule?.sources ?? '', 'economic,earnings');
+          });
+
+          block('session_buffer', (b) => {
+            inputNumber(b, 'Before minutes', 'before_minutes', rule?.before_minutes ?? 15, { min: 0, step: 1 });
+            inputNumber(b, 'After minutes', 'after_minutes', rule?.after_minutes ?? 15, { min: 0, step: 1 });
+          });
+
+          block('min_trade_interval', (b) => {
+            inputNumber(b, 'Minutes', 'minutes', rule?.minutes ?? 30, { min: 0, step: 1 });
+          });
+
+          block('max_position_pct', (b) => {
+            inputNumber(b, 'Max position %', 'pct', rule?.pct ?? 5.0, { min: 0, step: 0.1 });
+          });
+
+          block('entry_delay', (b) => {
+            inputNumber(b, 'Delay minutes', 'minutes', rule?.minutes ?? 0, { min: 0, step: 1 });
+          });
+
+          block('timezone_restriction', (b) => {
+            b.appendChild(el('label', { text: 'Timezone' }));
+            const tz = el('input', { type: 'text', placeholder: 'e.g. UTC, America/New_York' });
+            tz.setAttribute('data-field', 'timezone');
+            try { tz.setAttribute('list', 'guided-v2-timezone-datalist'); } catch (e) {}
+            tz.value = rule?.timezone ?? '';
+            b.appendChild(tz);
+          });
+
+          block('context_invalidation', (b) => {
+            inputCheckbox(b, 'Invalidate when context changes', 'invalidate_on_change', rule?.invalidate_on_change);
+            inputNumber(b, 'Grace period (bars)', 'grace_period_bars', rule?.grace_period_bars ?? 0, { min: 0, step: 1 });
+          });
+
+          block('day_month', (b) => {
+            inputText(b, 'Days (csv; optional)', 'days', rule?.days ?? '', 'Mon,Tue,Wed');
+            inputText(b, 'Months (csv; optional)', 'months', rule?.months ?? '', 'Jan,Feb');
+          });
+
+          block('custom', (b) => {
+            inputTextArea(b, 'Custom (DSL)', 'custom', rule?.custom ?? '', 'e.g. my_custom_filter(...)');
+          });
+        }
+
         row.appendChild(fields);
 
         if (section === 'context') {
@@ -1526,7 +2008,7 @@
           addOpt('atr_spike', 'Volatility: ATR spike');
           addOpt('structure_breakout_state', 'Structure: Breakout state (close vs prior high/low)');
           addOpt('ma_spread_pct', 'Trend strength: MA spread %');
-          addOpt('bollinger_context', 'Bollinger (anchor TF)');
+          addOpt('bollinger_context', 'Bollinger');
           addOpt('relative_volume', 'Relative Volume (RVOL)');
           addOpt('volume_osc_increase', 'Volume Oscillator Increase');
           addOpt('volume_above_ma', 'Volume Above MA');
@@ -1546,6 +2028,20 @@
           addOpt('volume_osc_increase', 'Volume Oscillator Increase');
           addOpt('volume_above_ma', 'Volume Above MA');
           addOpt('volume_rejection', 'Volume rejection (spike+reject)');
+          addOpt('custom', 'Custom (DSL)');
+        } else if (section === 'trade_filters') {
+          addOpt('session_window', 'Session window (allow entries during session)');
+          addOpt('blackout_window', 'Blackout window (disallow entries)');
+          addOpt('max_trades_per_day', 'Max trades per day');
+          addOpt('max_exposure', 'Max exposure (USD)');
+          addOpt('news_buffer', 'News buffer (minutes)');
+          addOpt('session_buffer', 'Session buffer (pre/post minutes)');
+          addOpt('min_trade_interval', 'Min interval between trades (minutes)');
+          addOpt('max_position_pct', 'Max position (% of account)');
+          addOpt('entry_delay', 'Entry delay (minutes)');
+          addOpt('timezone_restriction', 'Timezone restriction');
+          addOpt('context_invalidation', 'Context invalidation policy');
+          addOpt('day_month', 'Day / Month filter');
           addOpt('custom', 'Custom (DSL)');
         } else {
           addOpt('pin_bar', 'Pin bar');
@@ -1593,7 +2089,7 @@
           } catch (e) {}
 
           try {
-            if ((section === 'signal' || section === 'trigger') && tfSel) {
+            if ((section === 'signal' || section === 'trigger' || section === 'context') && tfSel) {
               tfSel.value = (rule && rule.tf) ? String(rule.tf) : (tfSel.querySelector('option[value="default"]') ? 'default' : (tfSel.options[0] ? tfSel.options[0].value : ''));
             }
           } catch (e) {}
@@ -1627,6 +2123,14 @@
 
         return row;
       }
+
+      // Make the canonical row renderer discoverable to the state-driven
+      // init/wiring code above (it looks for `window.ruleRow`).
+      try {
+        if (typeof window !== 'undefined' && typeof window.ruleRow !== 'function') {
+          window.ruleRow = ruleRow;
+        }
+      } catch (e) {}
 
       const serialize = (container) => {
         const rules = [];
@@ -1673,6 +2177,7 @@
         if (ctxHidden) ctxHidden.value = JSON.stringify(serialize(ctxContainer));
         if (sigHidden) sigHidden.value = JSON.stringify(serialize(sigContainer));
         if (trgHidden) trgHidden.value = JSON.stringify(serialize(trgContainer));
+        if (typeof tradeContainer !== 'undefined' && tradeContainer && tradeHidden) tradeHidden.value = JSON.stringify(serialize(tradeContainer));
       }
 
       function loadInitial() {
@@ -1931,7 +2436,8 @@
           asset_class: val('visual_asset_class') || '',
           context_rules: safeParseJson(ctxHidden?.value),
           signal_rules: safeParseJson(sigHidden?.value),
-          trigger_rules: safeParseJson(trgHidden?.value)
+          trigger_rules: safeParseJson(trgHidden?.value),
+          trade_filters: safeParseJson(tradeHidden?.value)
         };
       }
 

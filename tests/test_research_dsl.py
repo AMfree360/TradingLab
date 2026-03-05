@@ -57,6 +57,40 @@ def test_highest_lowest_shift_and_nz() -> None:
     assert out4.dtype == bool
 
 
+def test_shift_rejects_negative_periods() -> None:
+    # Negative shifts are look-ahead and must be disallowed.
+    with pytest.raises(DSLCompileError):
+        compile_condition("shift(close, -1)")
+
+
+def test_multitimeframe_at_is_truncation_invariant() -> None:
+    # If future bars are removed, earlier results must not change.
+    # This catches accidental backfilling / centered windows / forward-looking ops.
+    df_1h = _sample_df(80)
+    df_4h = df_1h.iloc[::4].copy()
+
+    expr = "ema(close@4h, 5) > ema(close, 3)"
+    reqs = extract_indicator_requests(expr, tf="1h")
+
+    df_1h_full = ensure_indicators(df_1h, [r for r in reqs if r.tf == "1h"])
+    df_4h_full = ensure_indicators(df_4h, [r for r in reqs if r.tf == "4h"])
+
+    fn = compile_condition(expr)
+    out_full = fn(EvalContext(df_by_tf={"1h": df_1h_full, "4h": df_4h_full}, tf="1h", target_index=df_1h_full.index))
+
+    cutoff = 45
+    df_1h_tr = df_1h.iloc[:cutoff].copy()
+    last_ts = df_1h_tr.index[-1]
+    df_4h_tr = df_4h[df_4h.index <= last_ts].copy()
+
+    df_1h_tr2 = ensure_indicators(df_1h_tr, [r for r in reqs if r.tf == "1h"])
+    df_4h_tr2 = ensure_indicators(df_4h_tr, [r for r in reqs if r.tf == "4h"])
+
+    out_tr = fn(EvalContext(df_by_tf={"1h": df_1h_tr2, "4h": df_4h_tr2}, tf="1h", target_index=df_1h_tr2.index))
+
+    assert out_full.loc[df_1h_tr2.index].equals(out_tr)
+
+
 def test_multitimeframe_at_aligns_to_current_tf() -> None:
     df_1h = _sample_df(30)
     # 2h data: take every other bar

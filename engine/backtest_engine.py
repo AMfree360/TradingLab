@@ -508,6 +508,8 @@ class BacktestEngine:
         trade_limits_cfg = getattr(strategy.config, 'trade_limits', None)
         self.max_trades_per_day = getattr(trade_limits_cfg, 'max_trades_per_day', None) if trade_limits_cfg else None
         self.max_daily_loss_pct = getattr(trade_limits_cfg, 'max_daily_loss_pct', None) if trade_limits_cfg else None
+        # Trade filters (gating rules) supplied by UI / strategy config
+        self.trade_filters = getattr(strategy.config, 'trade_filters', []) or []
 
         # Track entries per day: {date: count}
         # (Used to enforce max_trades_per_day. This counts successful ENTRIES, not exits.)
@@ -533,6 +535,25 @@ class BacktestEngine:
         if day_key not in self._day_start_equity_by_day:
             # Snapshot equity at first bar of the day (may include any carried positions)
             self._day_start_equity_by_day[day_key] = float(self.account.equity)
+
+    def _is_trade_allowed_at(self, ts: pd.Timestamp) -> bool:
+        """Deterministic, timestamp-only check whether trade filters allow an entry at ts.
+
+        Uses the shared `compute_trade_filters_mask` helper in the gui launcher module.
+        Returns True if allowed, False if filtered out.
+        """
+        try:
+            from gui_launcher.app import compute_trade_filters_mask
+            import pandas as pd
+
+            if ts is None:
+                return True
+            idx = pd.DatetimeIndex([pd.Timestamp(ts)])
+            mask = compute_trade_filters_mask(idx, getattr(self, 'trade_filters', []) or [], default_tz=None)
+            return bool(mask.iloc[0])
+        except Exception:
+            # On any error, be permissive (do not silently block trades)
+            return True
 
     def _get_day_base_equity_for_limits(self, ts: pd.Timestamp) -> float:
         """Baseline used for daily loss % checks."""
@@ -1501,14 +1522,19 @@ class BacktestEngine:
                                     
                                     if quantity > 0:
                                         # Force entry execution (bypasses should_enter check)
-                                        try:
-                                            entry_result = self._enter_position(synthetic_signal, current_time, current_price, quantity)
-                                            if entry_result is True:
-                                                # Successfully entered - clear randomized entry context for this iteration
-                                                # (will be reset for next MC iteration)
-                                                return
-                                        except Exception as e:
-                                            self.logger.debug(f"Randomized entry execution exception: {e}")
+                                            try:
+                                                # Respect trade_filters: deterministic check based on decision bar
+                                                decision_time = entry_bars.index[-1]
+                                                if not self._is_trade_allowed_at(decision_time):
+                                                    # Skip this forced entry
+                                                    return
+                                                entry_result = self._enter_position(synthetic_signal, current_time, current_price, quantity)
+                                                if entry_result is True:
+                                                    # Successfully entered - clear randomized entry context for this iteration
+                                                    # (will be reset for next MC iteration)
+                                                    return
+                                            except Exception as e:
+                                                self.logger.debug(f"Randomized entry execution exception: {e}")
         
         # Push new signals for this timestamp into pending queue
         # Check for signals that occurred at or before current_time (not just exact match)
@@ -1591,6 +1617,13 @@ class BacktestEngine:
                                                             self._immediate_exec_failures['daily_limit'] = 0
                                                         self._immediate_exec_failures['daily_limit'] += 1
                                                         continue
+
+                                                # Respect trade_filters at the actual fill time (deterministic, no lookahead)
+                                                if not self._is_trade_allowed_at(fill_time):
+                                                    if 'filtered' not in self._immediate_exec_failures:
+                                                        self._immediate_exec_failures['filtered'] = 0
+                                                    self._immediate_exec_failures['filtered'] += 1
+                                                    continue
 
                                                 # If the next open gaps beyond the stop, skip the trade
                                                 if (dir_int == 1 and fill_price <= stop_price) or (dir_int == -1 and fill_price >= stop_price):
@@ -1850,6 +1883,10 @@ class BacktestEngine:
             
             # Enter and clear the queue (single position model)
             try:
+                # Respect trade_filters at the actual fill time (deterministic, no lookahead)
+                if not self._is_trade_allowed_at(fill_time):
+                    rejected_count['ema_alignment'] += 1
+                    continue
                 entry_result = self._enter_position(signal, fill_time, float(fill_price), quantity)
                 if entry_result is not True:  # None or False indicates failure
                     rejected_count['cannot_afford'] += 1

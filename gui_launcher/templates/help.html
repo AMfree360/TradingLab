@@ -6,11 +6,28 @@
     <h2>Golden path (no code)</h2>
     <ol>
       <li>Create a strategy (Guided or English)</li>
+      <li>Get data from <a href="/data">Data</a> (download / consolidate)</li>
       <li>Open <a href="/strategies">Strategies</a> → edit spec YAML → Save + compile</li>
       <li>Run a backtest from <a href="/backtest">Backtest</a></li>
       <li>Inspect results in <a href="/runs">Runs</a> (logs + report links)</li>
       <li>Use “Rerun (same settings)” on a run to iterate fast</li>
     </ol>
+  </div>
+
+  <div class="card">
+    <h2>Research → validation → live (typical)</h2>
+    <ol>
+      <li>Backtest quickly (does the idea look promising?)</li>
+      <li>Run Phase 1/2 validation + final OOS validation from <code>scripts/</code> (reduce overfitting risk)</li>
+      <li>
+        If the target execution venue is:
+        <ul>
+          <li><strong>Crypto</strong>: trade live directly from TradingLab (API adapters)</li>
+          <li><strong>CME futures / FX</strong>: export to the platform (NT8 / MT5), then re-backtest with platform semantics before going live</li>
+        </ul>
+      </li>
+    </ol>
+    <div class="muted">Tip: treat cross-platform agreement as a strong sanity check, not a guarantee.</div>
   </div>
 
   <div class="card">

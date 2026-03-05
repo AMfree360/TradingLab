@@ -25,6 +25,7 @@ def test_write_and_load_spec_with_x_guided_ui(tmp_path):
         'context_rules': [{'type': 'price_vs_ma', 'length': 50, 'side': 'long'}],
         'signal_rules': [{'type': 'ma_cross', 'fast': 10, 'slow': 50, 'side': 'short'}],
         'trigger_rules': [],
+        'trade_filters': [{'type': 'session_window', 'start_time': '09:30', 'end_time': '16:00', 'timezone': 'UTC'}],
     }
 
     # write to repo (research_specs)
@@ -40,6 +41,7 @@ def test_write_and_load_spec_with_x_guided_ui(tmp_path):
     assert hasattr(loaded, 'x_guided_ui')
     assert isinstance(loaded.x_guided_ui, dict)
     assert 'context_rules' in loaded.x_guided_ui
+    assert 'trade_filters' in loaded.x_guided_ui
 
     # cleanup
     p.unlink()

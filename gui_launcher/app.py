@@ -36,6 +36,46 @@ REPO_ROOT = Path(__file__).parent.parent
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def _parse_bool01(v: str | None) -> bool:
+    return str(v or "").strip() in {"1", "true", "True", "yes", "on"}
+
+
+def _validate_yyyy_mm_dd(s: str, *, field: str) -> str:
+    import datetime as _dt
+
+    raw = str(s or "").strip()
+    if not raw:
+        raise ValueError(f"Missing {field}")
+    try:
+        _dt.datetime.strptime(raw, "%Y-%m-%d")
+    except Exception:
+        raise ValueError(f"Invalid {field} (expected YYYY-MM-DD)")
+    return raw
+
+
+def _safe_symbol(s: str) -> str:
+    sym = str(s or "").strip().upper()
+    if not sym:
+        raise ValueError("Missing symbol")
+    # Keep permissive but safe for filenames.
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.: ")
+    if any(ch not in allowed for ch in sym):
+        raise ValueError("Symbol contains unsupported characters")
+    return sym.replace(" ", "")
+
+
+def _safe_path_under_data(rel_path: str) -> Path:
+    """Resolve a user-provided relative path, ensuring it stays under REPO_ROOT/data."""
+    raw = str(rel_path or "").strip().lstrip("/")
+    if not raw:
+        raise ValueError("Missing output path")
+    p = (REPO_ROOT / "data" / raw).resolve()
+    base = (REPO_ROOT / "data").resolve()
+    if not str(p).startswith(str(base)):
+        raise ValueError("Output path must be under data/")
+    return p
+
+
 @lru_cache(maxsize=1)
 def _get_master_calendar_defaults() -> dict[str, Any]:
     """Load canonical calendar defaults from config/master_filters.yml.
@@ -218,6 +258,161 @@ def _spec_to_yaml_compact(spec: StrategySpec) -> str:
     data = spec.model_dump(exclude_none=True, exclude_defaults=True)
     data = _prune_empty(data)
     return yaml.safe_dump(data, sort_keys=False)
+
+
+def compute_trade_filters_mask(index: 'pd.DatetimeIndex', trade_filters: list, *, default_tz: str | None = None) -> 'pd.Series':
+    """Compute a boolean mask for an index indicating whether a trade would be allowed
+    at each timestamp according to the provided `trade_filters` list.
+
+    Deterministic and uses only timestamp information (no future price data).
+    Supported filter types (best-effort): `session_window`, `blackout_window`, `day_month`.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import pandas as pd
+
+    if not isinstance(index, pd.DatetimeIndex):
+        index = pd.DatetimeIndex(index)
+
+    if not trade_filters:
+        return pd.Series([True] * len(index), index=index)
+
+    idx = index
+    try:
+        if idx.tz is None:
+            tz = default_tz or 'UTC'
+            idx = idx.tz_localize(tz)
+    except Exception:
+        try:
+            idx = idx.tz_localize('UTC')
+        except Exception:
+            pass
+
+    def _to_tz(idx_local, tz_name: str):
+        try:
+            return idx_local.tz_convert(tz_name)
+        except Exception:
+            return idx_local
+
+    allowed = pd.Series([True] * len(idx), index=index)
+
+    session_rules = [r for r in (trade_filters or []) if str(r.get('type') or '').strip().lower() == 'session_window']
+    blackout_rules = [r for r in (trade_filters or []) if str(r.get('type') or '').strip().lower() == 'blackout_window']
+    daymonth_rules = [r for r in (trade_filters or []) if str(r.get('type') or '').strip().lower() == 'day_month']
+
+    if session_rules:
+        session_mask = pd.Series([False] * len(idx), index=index)
+        for r in session_rules:
+            start = str(r.get('start_time') or '00:00')
+            end = str(r.get('end_time') or '23:59')
+            days = r.get('days') or []
+            if isinstance(days, str):
+                days = [d.strip() for d in days.split(',') if d.strip()]
+            tzname = r.get('timezone') or default_tz
+            idx_t = _to_tz(idx, tzname) if tzname else idx
+            mins = idx_t.hour * 60 + idx_t.minute
+            try:
+                h, m = [int(x) for x in start.split(':')]
+                start_min = h * 60 + m
+            except Exception:
+                start_min = 0
+            try:
+                h, m = [int(x) for x in end.split(':')]
+                end_min = h * 60 + m
+            except Exception:
+                end_min = 23 * 60 + 59
+
+            if start_min <= end_min:
+                time_ok = (mins >= start_min) & (mins <= end_min)
+            else:
+                time_ok = (mins >= start_min) | (mins <= end_min)
+
+            if days:
+                try:
+                    names = idx_t.day_name().str.slice(0, 3)
+                except Exception:
+                    names = pd.Series([ts.strftime('%a') for ts in idx_t], index=index)
+                days_norm = [d[:3] for d in days]
+                day_ok = names.isin(days_norm)
+            else:
+                day_ok = pd.Series([True] * len(idx), index=index)
+
+            session_mask = session_mask | (time_ok & day_ok)
+
+        allowed = allowed & session_mask
+
+    if blackout_rules:
+        blackout_mask = pd.Series([False] * len(idx), index=index)
+        for r in blackout_rules:
+            start = str(r.get('start_time') or '00:00')
+            end = str(r.get('end_time') or '00:00')
+            days = r.get('days') or []
+            if isinstance(days, str):
+                days = [d.strip() for d in days.split(',') if d.strip()]
+            tzname = r.get('timezone') or default_tz
+            idx_t = _to_tz(idx, tzname) if tzname else idx
+            mins = idx_t.hour * 60 + idx_t.minute
+            try:
+                h, m = [int(x) for x in start.split(':')]
+                start_min = h * 60 + m
+            except Exception:
+                start_min = 0
+            try:
+                h, m = [int(x) for x in end.split(':')]
+                end_min = h * 60 + m
+            except Exception:
+                end_min = 0
+
+            if start_min <= end_min:
+                time_in = (mins >= start_min) & (mins <= end_min)
+            else:
+                time_in = (mins >= start_min) | (mins <= end_min)
+
+            if days:
+                try:
+                    names = idx_t.day_name().str.slice(0, 3)
+                except Exception:
+                    names = pd.Series([ts.strftime('%a') for ts in idx_t], index=index)
+                days_norm = [d[:3] for d in days]
+                day_ok = names.isin(days_norm)
+            else:
+                day_ok = pd.Series([True] * len(idx), index=index)
+
+            blackout_mask = blackout_mask | (time_in & day_ok)
+
+        allowed = allowed & (~blackout_mask)
+
+    if daymonth_rules:
+        dm_mask = pd.Series([False] * len(idx), index=index)
+        for r in daymonth_rules:
+            days = r.get('days') or []
+            months = r.get('months') or []
+            tzname = r.get('timezone') or default_tz
+            idx_t = _to_tz(idx, tzname) if tzname else idx
+            m_ok = pd.Series([True] * len(idx), index=index)
+            d_ok = pd.Series([True] * len(idx), index=index)
+            if days:
+                if isinstance(days, str):
+                    days = [d.strip() for d in days.split(',') if d.strip()]
+                try:
+                    names = idx_t.day_name().str.slice(0, 3)
+                except Exception:
+                    names = pd.Series([ts.strftime('%a') for ts in idx_t], index=index)
+                days_norm = [d[:3] for d in days]
+                d_ok = names.isin(days_norm)
+            if months:
+                if isinstance(months, str):
+                    months = [m.strip() for m in months.split(',') if m.strip()]
+                try:
+                    months_names = idx_t.month_name().str.slice(0, 3)
+                except Exception:
+                    months_names = pd.Series([ts.strftime('%b') for ts in idx_t], index=index)
+                months_norm = [m[:3] for m in months]
+                m_ok = months_names.isin(months_norm)
+            dm_mask = dm_mask | (d_ok & m_ok)
+        allowed = allowed & dm_mask
+
+    return pd.Series(allowed.values, index=index)
 
 
 def _write_validated_spec_to_repo(*, spec: StrategySpec, old_spec_name: str, extra_meta: dict[str, Any] | None = None) -> Path:
@@ -898,6 +1093,9 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
     extra_trigger_rules = draft.get("trigger_rules")
     if not isinstance(extra_trigger_rules, list):
         extra_trigger_rules = []
+    trade_filters = draft.get("trade_filters")
+    if not isinstance(trade_filters, list):
+        trade_filters = []
 
     def _effective_tf_label(rules: list, global_raw: str, default_label: str) -> str:
         """Compute a compact label for TFs used by a list of per-rule entries.
@@ -1008,6 +1206,74 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
             return items
 
         if rtype in {"", "none"}:
+            return items
+
+        # MA Stack (Builder v2): a flexible context regime rule.
+        # This is a per-rule version of the legacy "primary_context_type=ma_stack".
+        if rtype == "ma_stack":
+            r_ma_type = str(rule.get("ma_type") or "ema").strip().lower()
+            try:
+                fast_len = int(rule.get("ma_fast") or 20)
+            except Exception:
+                fast_len = 20
+            try:
+                mid_len = int(rule.get("ma_mid") or 50)
+            except Exception:
+                mid_len = 50
+            try:
+                slow_len = int(rule.get("ma_slow") or 200)
+            except Exception:
+                slow_len = 200
+
+            stack_mode = str(rule.get("stack_mode") or "none").strip().lower()
+            try:
+                slope_lookback = int(rule.get("slope_lookback") or 0)
+            except Exception:
+                slope_lookback = 0
+            try:
+                min_dist_pct = float(rule.get("min_ma_dist_pct") or 0.0)
+            except Exception:
+                min_dist_pct = 0.0
+
+            valid_for = rule.get("valid_for_bars")
+
+            f = _ma_expr(r_ma_type, fast_len, tf)
+            m = _ma_expr(r_ma_type, mid_len, tf)
+            s = _ma_expr(r_ma_type, slow_len, tf)
+
+            # Stack ordering constraint (optional)
+            if stack_mode in {"bull", "bear"}:
+                if stack_mode == "bull":
+                    expr = f"{f} > {m} and {m} > {s}"
+                    label = f"MA stack bullish ({r_ma_type.upper()} {fast_len}/{mid_len}/{slow_len}) on {tf_label}"
+                else:
+                    expr = f"{f} < {m} and {m} < {s}"
+                    label = f"MA stack bearish ({r_ma_type.upper()} {fast_len}/{mid_len}/{slow_len}) on {tf_label}"
+                expr = _apply_valid_for_bars(expr, valid_for)
+                items.append({"group": "Regime", "label": label, "expr": expr})
+
+            # Slope constraint (disable by setting lookback <= 0)
+            if slope_lookback and slope_lookback > 0:
+                if d == "bull":
+                    expr = f"{m} > shift({m}, {int(slope_lookback)})"
+                    label = f"Mid MA slope up (N={int(slope_lookback)}) on {tf_label}"
+                else:
+                    expr = f"{m} < shift({m}, {int(slope_lookback)})"
+                    label = f"Mid MA slope down (N={int(slope_lookback)}) on {tf_label}"
+                expr = _apply_valid_for_bars(expr, valid_for)
+                items.append({"group": "Regime", "label": label, "expr": expr})
+
+            # Directional fast/slow separation constraint
+            if min_dist_pct and min_dist_pct > 0:
+                thr = float(min_dist_pct)
+                if d == "bull":
+                    expr = f"({f} - {s}) / {s} > {thr}"
+                else:
+                    expr = f"({s} - {f}) / {s} > {thr}"
+                label = f"Fast/slow MA distance >= {thr:g} (directional) on {tf_label}"
+                expr = _apply_valid_for_bars(expr, valid_for)
+                items.append({"group": "Separation", "label": label, "expr": expr})
+
             return items
 
         if rtype == "price_vs_ma":
@@ -1912,6 +2178,9 @@ def _builder_v2_preview(draft: dict[str, Any]) -> dict[str, Any]:
         "signal_tf": eff_sig_tf_label,
         "trigger_tf": eff_trg_tf_label,
         "aligned_dual": aligned_dual,
+        # Pass through any trade_filters supplied by the UI so preview/backtest
+        # tooling can include gating rules in the effective rule-set.
+        "trade_filters": trade_filters,
         "long": {
             "enabled": long_enabled,
             "direction": long_trade_dir,
@@ -2002,6 +2271,8 @@ async def api_guided_builder_v2_preview(request: Request) -> JSONResponse:
         "context_rules": payload.get("context_rules") if isinstance(payload.get("context_rules"), list) else [],
         "signal_rules": payload.get("signal_rules") if isinstance(payload.get("signal_rules"), list) else [],
         "trigger_rules": payload.get("trigger_rules") if isinstance(payload.get("trigger_rules"), list) else [],
+        # Trade filters (gating / entry filters) submitted from the Builder v2 UI.
+        "trade_filters": payload.get("trade_filters") if isinstance(payload.get("trade_filters"), list) else [],
     }
 
     # Normalize numeric fields
@@ -2942,7 +3213,19 @@ async def api_guided_builder_v2_setup_visual(request: Request) -> JSONResponse:
                 )
 
         if long_enabled:
-            idx = entry_index[long_all.values]
+            # Apply trade_filters (time-based gating) deterministically (no lookahead)
+            try:
+                tf_rules = base.get('trade_filters') if isinstance(base.get('trade_filters'), list) else []
+                default_tz = None
+                if hasattr(df_raw.index, 'tz') and getattr(df_raw.index, 'tz'):
+                    default_tz = str(df_raw.index.tz)
+                trade_mask = compute_trade_filters_mask(entry_index, tf_rules, default_tz=default_tz)
+            except Exception:
+                import pandas as pd
+
+                trade_mask = pd.Series([True] * len(entry_index), index=entry_index)
+
+            idx = entry_index[(long_all & trade_mask).values]
             if len(idx) > 0:
                 fig.add_trace(
                     go.Scatter(
@@ -2953,8 +3236,21 @@ async def api_guided_builder_v2_setup_visual(request: Request) -> JSONResponse:
                         marker=dict(symbol="triangle-up", size=9, color="rgba(0, 140, 0, 0.9)"),
                     )
                 )
+            # Also show where setups were blocked by filters (for debugging)
+            blocked_idx = entry_index[(long_all & (~trade_mask)).values]
+            if len(blocked_idx) > 0:
+                fig.add_trace(
+                    go.Scatter(
+                        x=blocked_idx,
+                        y=df_entry.loc[blocked_idx, "low"],
+                        mode="markers",
+                        name="LONG filtered (no-entry)",
+                        visible="legendonly",
+                        marker=dict(symbol="x", size=7, color="rgba(200, 0, 0, 0.6)"),
+                    )
+                )
         if short_enabled:
-            idx = entry_index[short_all.values]
+            idx = entry_index[(short_all & trade_mask).values]
             if len(idx) > 0:
                 fig.add_trace(
                     go.Scatter(
@@ -2963,6 +3259,18 @@ async def api_guided_builder_v2_setup_visual(request: Request) -> JSONResponse:
                         mode="markers",
                         name="SHORT setup",
                         marker=dict(symbol="triangle-down", size=9, color="rgba(180, 0, 0, 0.9)"),
+                    )
+                )
+            blocked_idx = entry_index[(short_all & (~trade_mask)).values]
+            if len(blocked_idx) > 0:
+                fig.add_trace(
+                    go.Scatter(
+                        x=blocked_idx,
+                        y=df_entry.loc[blocked_idx, "high"],
+                        mode="markers",
+                        name="SHORT filtered (no-entry)",
+                        visible="legendonly",
+                        marker=dict(symbol="x", size=7, color="rgba(0, 120, 255, 0.55)"),
                     )
                 )
 
@@ -3294,6 +3602,276 @@ def home(request: Request):
         return TEMPLATES.TemplateResponse("home.html", {"request": request, "title": "TradingLab Launcher"})
     except Exception:
         return HTMLResponse("<h1>TradingLab Launcher</h1>")
+
+
+@app.get("/data", response_class=HTMLResponse)
+def data_page(request: Request):
+    import datetime as _dt
+
+    today = _dt.date.today()
+    default_start = (today - _dt.timedelta(days=365)).strftime("%Y-%m-%d")
+    default_end = today.strftime("%Y-%m-%d")
+
+    defaults = {
+        "symbol": "BTCUSDT",
+        "interval": "15m",
+        "intervals": ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+        "start_date": default_start,
+        "end_date": default_end,
+        "provider": "binance_vision",
+        "providers": ["binance_api", "binance_vision", "yfinance", "stooq", "csv_url"],
+        "market_type": "spot",
+        "yf_auto_adjust": False,
+        "csv_url": "",
+        "save_subdir": "",
+        "format": "parquet",
+        "input_patterns": "",
+        "output_rel": "processed/consolidated.parquet",
+        "dedupe_keep": "first",
+        "allow_mixed_frequency": False,
+        "keep_duplicates": False,
+    }
+
+    return TEMPLATES.TemplateResponse(
+        request,
+        "data.html",
+        {
+            "title": "Data",
+            "defaults": defaults,
+        },
+    )
+
+
+@app.post("/data/download", response_class=HTMLResponse)
+async def data_download_run(
+    request: Request,
+    symbol: str = Form("BTCUSDT"),
+    interval: str = Form("15m"),
+    start_date: str = Form(...),
+    end_date: str = Form(...),
+    provider: str = Form("binance_vision"),
+    market_type: str = Form("spot"),
+    yf_auto_adjust: str | None = Form(None),
+    csv_url: str | None = Form(None),
+    save_subdir: str | None = Form(None),
+    format: str = Form("parquet"),
+):
+    try:
+        sym = _safe_symbol(symbol)
+        sd = _validate_yyyy_mm_dd(start_date, field="start date")
+        ed = _validate_yyyy_mm_dd(end_date, field="end date")
+
+        provider_n = str(provider or "binance_vision").strip().lower()
+        if provider_n not in {"binance_api", "binance_vision", "yfinance", "stooq", "csv_url"}:
+            raise ValueError("Unsupported provider")
+
+        fmt = str(format or "parquet").strip().lower()
+        if fmt not in {"parquet", "csv"}:
+            fmt = "parquet"
+        ext = ".parquet" if fmt == "parquet" else ".csv"
+
+        subdir = str(save_subdir or "").strip().lstrip("/")
+        if not subdir:
+            subdir = f"downloads/{sym}"
+        out_dir = _safe_path_under_data(subdir)
+        out_path = (out_dir / f"{sym}-{interval}-{sd}_to_{ed}{ext}").resolve()
+        base = (REPO_ROOT / "data").resolve()
+        if not str(out_path).startswith(str(base)):
+            raise ValueError("Output path must be under data/")
+
+        bundle = create_run_bundle(repo_root=REPO_ROOT, workflow="data_download", strategy_name=sym)
+        write_bundle_meta(bundle, python_executable=sys.executable, repo_root=REPO_ROOT)
+        inputs = {
+            "workflow": "data_download",
+            "provider": provider_n,
+            "symbol": sym,
+            "interval": str(interval).strip(),
+            "start_date": sd,
+            "end_date": ed,
+            "market_type": str(market_type or "spot").strip(),
+            "yf_auto_adjust": _parse_bool01(yf_auto_adjust),
+            "csv_url": str(csv_url or "").strip(),
+            "output": str(out_path),
+            "format": fmt,
+        }
+        write_bundle_inputs(bundle, inputs)
+
+        argv: list[str] = [
+            sys.executable,
+            "scripts/download_data.py",
+            "--provider",
+            provider_n,
+            "--symbol",
+            sym,
+            "--interval",
+            str(interval).strip(),
+            "--start",
+            sd,
+            "--end",
+            ed,
+            "--format",
+            fmt,
+            "--output",
+            str(out_path),
+        ]
+
+        if provider_n == "binance_vision":
+            mt = str(market_type or "spot").strip().lower()
+            if mt not in {"spot", "futures_um"}:
+                mt = "spot"
+            argv.extend(["--market-type", mt])
+
+        if provider_n == "yfinance" and _parse_bool01(yf_auto_adjust):
+            argv.append("--yf-auto-adjust")
+
+        if provider_n == "csv_url":
+            url = str(csv_url or "").strip()
+            if not url:
+                raise ValueError("CSV URL is required for provider=csv_url")
+            argv.extend(["--csv-url", url])
+
+        write_bundle_command(bundle, argv)
+        job = runner.create(argv=argv, cwd=REPO_ROOT)
+        runner.start(job.id)
+
+        JOB_META[job.id] = {
+            "bundle_dir": str(bundle.dir),
+            "workflow": "data_download",
+            "strategy_name": sym,
+        }
+
+        return TEMPLATES.TemplateResponse(
+            request,
+            "job.html",
+            {
+                "title": "Downloading data",
+                "job_id": job.id,
+                "next_hint": "data",
+            },
+        )
+    except Exception as e:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "data.html",
+            {
+                "title": "Data",
+                "error": f"{type(e).__name__}: {e}",
+                "defaults": {
+                    "symbol": str(symbol or ""),
+                    "interval": str(interval or "15m"),
+                    "intervals": ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                    "start_date": str(start_date or ""),
+                    "end_date": str(end_date or ""),
+                    "provider": str(provider or "binance_vision"),
+                    "providers": ["binance_api", "binance_vision", "yfinance", "stooq", "csv_url"],
+                    "market_type": str(market_type or "spot"),
+                    "yf_auto_adjust": _parse_bool01(yf_auto_adjust),
+                    "csv_url": str(csv_url or ""),
+                    "save_subdir": str(save_subdir or ""),
+                    "format": str(format or "parquet"),
+                    "input_patterns": "",
+                    "output_rel": "processed/consolidated.parquet",
+                    "dedupe_keep": "first",
+                    "allow_mixed_frequency": False,
+                    "keep_duplicates": False,
+                },
+            },
+        )
+
+
+@app.post("/data/consolidate", response_class=HTMLResponse)
+async def data_consolidate_run(
+    request: Request,
+    input_patterns: str = Form(...),
+    output_rel: str = Form("processed/consolidated.parquet"),
+    dedupe_keep: str = Form("first"),
+    allow_mixed_frequency: str | None = Form(None),
+    keep_duplicates: str | None = Form(None),
+):
+    try:
+        patterns = [ln.strip() for ln in str(input_patterns or "").splitlines() if ln.strip()]
+        if not patterns:
+            raise ValueError("Provide at least one input pattern")
+
+        out_path = _safe_path_under_data(output_rel)
+        dk = str(dedupe_keep or "first").strip().lower()
+        if dk not in {"first", "last"}:
+            dk = "first"
+
+        bundle = create_run_bundle(repo_root=REPO_ROOT, workflow="data_consolidate", strategy_name="data")
+        write_bundle_meta(bundle, python_executable=sys.executable, repo_root=REPO_ROOT)
+        inputs = {
+            "workflow": "data_consolidate",
+            "input": patterns,
+            "output": str(out_path),
+            "dedupe_keep": dk,
+            "allow_mixed_frequency": _parse_bool01(allow_mixed_frequency),
+            "keep_duplicates": _parse_bool01(keep_duplicates),
+        }
+        write_bundle_inputs(bundle, inputs)
+
+        argv: list[str] = [
+            sys.executable,
+            "scripts/consolidate_data.py",
+            "--input",
+            *patterns,
+            "--output",
+            str(out_path),
+            "--dedupe-keep",
+            dk,
+        ]
+        if _parse_bool01(allow_mixed_frequency):
+            argv.append("--allow-mixed-frequency")
+        if _parse_bool01(keep_duplicates):
+            argv.append("--keep-duplicates")
+
+        write_bundle_command(bundle, argv)
+        job = runner.create(argv=argv, cwd=REPO_ROOT)
+        runner.start(job.id)
+
+        JOB_META[job.id] = {
+            "bundle_dir": str(bundle.dir),
+            "workflow": "data_consolidate",
+            "strategy_name": "data",
+        }
+
+        return TEMPLATES.TemplateResponse(
+            request,
+            "job.html",
+            {
+                "title": "Consolidating data",
+                "job_id": job.id,
+                "next_hint": "data",
+            },
+        )
+    except Exception as e:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "data.html",
+            {
+                "title": "Data",
+                "error": f"{type(e).__name__}: {e}",
+                "defaults": {
+                    "symbol": "BTCUSDT",
+                    "interval": "15m",
+                    "intervals": ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                    "start_date": "",
+                    "end_date": "",
+                    "provider": "binance_vision",
+                    "providers": ["binance_api", "binance_vision", "yfinance", "stooq", "csv_url"],
+                    "market_type": "spot",
+                    "yf_auto_adjust": False,
+                    "csv_url": "",
+                    "save_subdir": "",
+                    "format": "parquet",
+                    "input_patterns": str(input_patterns or ""),
+                    "output_rel": str(output_rel or "processed/consolidated.parquet"),
+                    "dedupe_keep": str(dedupe_keep or "first"),
+                    "allow_mixed_frequency": _parse_bool01(allow_mixed_frequency),
+                    "keep_duplicates": _parse_bool01(keep_duplicates),
+                },
+            },
+        )
 
 
 @app.get("/help", response_class=HTMLResponse)
@@ -5426,6 +6004,9 @@ async def create_strategy_guided_step2_submit(
             update["entry_tf"] = "1h"
 
     draft.update(update)
+    # Builder v2 flow: go straight to the Builder step (filters/signals) before execution settings.
+    if template == "builder_v2":
+        return RedirectResponse(url=f"/create-strategy-guided/step3?draft_id={draft_id}", status_code=303)
     return RedirectResponse(url=f"/create-strategy-guided/step3?draft_id={draft_id}", status_code=303)
 
 
@@ -5434,6 +6015,44 @@ def create_strategy_guided_step3_holding(request: Request, draft_id: str):
     draft = DRAFTS.get(draft_id)
     if not draft or draft.get("kind") != "guided":
         return RedirectResponse(url="/create-strategy-guided", status_code=303)
+
+    # Builder v2: Step 3 is the Builder page (signals/filters).
+    if str(draft.get("template") or "").strip().lower() == "builder_v2":
+        # If editing an existing draft that has a non-default max_trades_per_day, surface it
+        # in the Trade Filters UI (which is the single place for filters).
+        try:
+            existing_max_trades = int(draft.get("max_trades_per_day") or 1)
+        except Exception:
+            existing_max_trades = 1
+        try:
+            tf = draft.get("trade_filters")
+            if not isinstance(tf, list):
+                tf = []
+            has_rule = False
+            for r in tf:
+                try:
+                    if isinstance(r, dict) and str(r.get("type") or "").strip().lower() == "max_trades_per_day":
+                        has_rule = True
+                        break
+                except Exception:
+                    continue
+            if (not has_rule) and existing_max_trades != 1:
+                tf.append({"type": "max_trades_per_day", "limit": existing_max_trades, "side": "both"})
+                draft["trade_filters"] = tf
+        except Exception:
+            pass
+
+        return TEMPLATES.TemplateResponse(
+            request,
+            "guided_builder_v2.html",
+            {
+                "title": "Create Strategy (Guided)",
+                "draft_id": draft_id,
+                "draft": draft,
+                "preview": _builder_v2_preview(draft),
+                "error": None,
+            },
+        )
 
     return TEMPLATES.TemplateResponse(
         request,
@@ -5459,6 +6078,11 @@ async def create_strategy_guided_step3_holding_submit(
     draft = DRAFTS.get(draft_id)
     if not draft or draft.get("kind") != "guided":
         return RedirectResponse(url="/create-strategy-guided", status_code=303)
+
+    # Builder v2: Step 3 is the Builder submit. Reuse the existing submit handler logic
+    # (it keys off `builder_mode=v2` from the form), and keep legacy holding-submit here.
+    if str(draft.get("template") or "").strip().lower() == "builder_v2":
+        return await create_strategy_guided_step4_submit(request, draft_id)
 
     holding_style = str(holding_style).strip().lower()
     if holding_style not in {"intraday", "swing"}:
@@ -5496,6 +6120,9 @@ async def create_strategy_guided_step3_holding_submit(
     draft["stop_signal_search_minutes_before"] = ssm
 
     draft["holding_style"] = holding_style
+    # Builder v2 flow: after execution basics, proceed to Step 5 advanced settings.
+    if str(draft.get("template") or "").strip().lower() == "builder_v2":
+        return RedirectResponse(url=f"/create-strategy-guided/step5?draft_id={draft_id}", status_code=303)
     return RedirectResponse(url=f"/create-strategy-guided/step4?draft_id={draft_id}", status_code=303)
 
 
@@ -5508,13 +6135,11 @@ def create_strategy_guided_step4(request: Request, draft_id: str):
     if str(draft.get("template") or "").strip().lower() == "builder_v2":
         return TEMPLATES.TemplateResponse(
             request,
-            "guided_builder_v2.html",
+            "guided_step3_holding.html",
             {
                 "title": "Create Strategy (Guided)",
                 "draft_id": draft_id,
                 "draft": draft,
-                "preview": _builder_v2_preview(draft),
-                "error": None,
             },
         )
 
@@ -5535,6 +6160,51 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
     if not draft or draft.get("kind") != "guided":
         return RedirectResponse(url="/create-strategy-guided", status_code=303)
 
+    form = await request.form()
+    form_dict = {k: v for k, v in form.items()}
+    builder_mode = str(form_dict.get("builder_mode") or "").strip().lower()
+
+    # Builder v2: Step 4 is execution basics (holding style). This POST should accept the holding-style form.
+    if str(draft.get("template") or "").strip().lower() == "builder_v2" and builder_mode != "v2":
+        holding_style = str(form_dict.get("holding_style") or "intraday").strip().lower()
+        if holding_style not in {"intraday", "swing"}:
+            holding_style = "intraday"
+
+        flatten_enabled = form_dict.get("flatten_enabled")
+        flatten_time = str(form_dict.get("flatten_time") or "21:30").strip()
+        stop_signal_search_minutes_before = form_dict.get("stop_signal_search_minutes_before")
+        use_intraday_margin = form_dict.get("use_intraday_margin")
+
+        # Defaults by style
+        if holding_style == "intraday":
+            draft["flatten_enabled"] = True
+            draft["flatten_time"] = (flatten_time or "21:30").strip()
+            draft["use_intraday_margin"] = True if use_intraday_margin is None else bool(use_intraday_margin)
+        else:
+            draft["flatten_enabled"] = False
+            draft["flatten_time"] = None
+            draft["use_intraday_margin"] = False
+
+        # Allow user override for flatten_enabled checkbox
+        if flatten_enabled is not None:
+            draft["flatten_enabled"] = True
+            draft["flatten_time"] = (flatten_time or "21:30").strip()
+
+        # stop-signal-search minutes
+        ssm = None
+        try:
+            raw = (str(stop_signal_search_minutes_before or "")).strip()
+            if raw:
+                ssm = int(raw)
+                if ssm < 0:
+                    ssm = 0
+        except Exception:
+            ssm = None
+        draft["stop_signal_search_minutes_before"] = ssm
+
+        draft["holding_style"] = holding_style
+        return RedirectResponse(url=f"/create-strategy-guided/step5?draft_id={draft_id}", status_code=303)
+
     # Temporary debug: capture raw body and content-type to inspect beacon/XHR payloads
     try:
         raw_body = await request.body()
@@ -5552,12 +6222,181 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
             print('[guided-debug] raw-request read failed', _e)
         except Exception:
             pass
-
-    form = await request.form()
-    form_dict = {k: v for k, v in form.items()}
     # Persist server-side copy of incoming payload for post-mortem harness analysis.
     try:
         from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        def compute_trade_filters_mask(index: 'pd.DatetimeIndex', trade_filters: list, *, default_tz: str | None = None) -> 'pd.Series':
+            """Compute a boolean mask for an index indicating whether a trade would be allowed
+            at each timestamp according to the provided `trade_filters` list.
+
+            This function is deterministic and uses only timestamp information (no future price data).
+            Supported filter types (best-effort): `session_window`, `blackout_window`, `day_month`.
+
+            Args:
+                index: DatetimeIndex for the entry timeframe (may be tz-aware or naive).
+                trade_filters: list of dict rule objects (from UI serialization).
+                default_tz: optional timezone string to assume for naive timestamps.
+
+            Returns:
+                pd.Series of booleans indexed by `index` where True => entries allowed.
+            """
+            import pandas as pd
+
+            if not isinstance(index, pd.DatetimeIndex):
+                # Try to coerce
+                index = pd.DatetimeIndex(index)
+
+            if not trade_filters:
+                return pd.Series([True] * len(index), index=index)
+
+            # Normalize index to a timezone-aware index (assume UTC or provided default)
+            idx = index
+            try:
+                if idx.tz is None:
+                    tz = default_tz or 'UTC'
+                    idx = idx.tz_localize(tz)
+            except Exception:
+                try:
+                    idx = idx.tz_localize('UTC')
+                except Exception:
+                    pass
+
+            # Helper to convert index to target tz
+            def _to_tz(idx_local, tz_name: str):
+                try:
+                    return idx_local.tz_convert(tz_name)
+                except Exception:
+                    return idx_local
+
+            allowed = pd.Series([True] * len(idx), index=index)
+
+            # Collect session windows and blackout windows separately
+            session_rules = [r for r in (trade_filters or []) if str(r.get('type') or '').strip().lower() == 'session_window']
+            blackout_rules = [r for r in (trade_filters or []) if str(r.get('type') or '').strip().lower() == 'blackout_window']
+            daymonth_rules = [r for r in (trade_filters or []) if str(r.get('type') or '').strip().lower() == 'day_month']
+
+            # SESSION windows: if any session rules exist, allow only if inside ANY session rule (OR semantics)
+            if session_rules:
+                session_mask = pd.Series([False] * len(idx), index=index)
+                for r in session_rules:
+                    start = str(r.get('start_time') or '00:00')
+                    end = str(r.get('end_time') or '23:59')
+                    days = r.get('days') or []
+                    if isinstance(days, str):
+                        days = [d.strip() for d in days.split(',') if d.strip()]
+                    tzname = r.get('timezone') or default_tz
+                    idx_t = _to_tz(idx, tzname) if tzname else idx
+                    mins = idx_t.hour * 60 + idx_t.minute
+                    try:
+                        h, m = [int(x) for x in start.split(':')]
+                        start_min = h * 60 + m
+                    except Exception:
+                        start_min = 0
+                    try:
+                        h, m = [int(x) for x in end.split(':')]
+                        end_min = h * 60 + m
+                    except Exception:
+                        end_min = 23 * 60 + 59
+
+                    if start_min <= end_min:
+                        time_ok = (mins >= start_min) & (mins <= end_min)
+                    else:
+                        # wrap-around midnight
+                        time_ok = (mins >= start_min) | (mins <= end_min)
+
+                    if days:
+                        # Normalize day names to 3-letter e.g. Mon
+                        day_map = {d: d for d in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']}
+                        try:
+                            names = idx_t.day_name().str.slice(0, 3)
+                        except Exception:
+                            names = pd.Series([ts.strftime('%a') for ts in idx_t], index=index)
+                        days_norm = [d[:3] for d in days]
+                        day_ok = names.isin(days_norm)
+                    else:
+                        day_ok = pd.Series([True] * len(idx), index=index)
+
+                    session_mask = session_mask | (time_ok & day_ok)
+
+                allowed = allowed & session_mask
+
+            # BLACKOUT windows: disallow if inside ANY blackout rule
+            if blackout_rules:
+                blackout_mask = pd.Series([False] * len(idx), index=index)
+                for r in blackout_rules:
+                    start = str(r.get('start_time') or '00:00')
+                    end = str(r.get('end_time') or '00:00')
+                    days = r.get('days') or []
+                    if isinstance(days, str):
+                        days = [d.strip() for d in days.split(',') if d.strip()]
+                    tzname = r.get('timezone') or default_tz
+                    idx_t = _to_tz(idx, tzname) if tzname else idx
+                    mins = idx_t.hour * 60 + idx_t.minute
+                    try:
+                        h, m = [int(x) for x in start.split(':')]
+                        start_min = h * 60 + m
+                    except Exception:
+                        start_min = 0
+                    try:
+                        h, m = [int(x) for x in end.split(':')]
+                        end_min = h * 60 + m
+                    except Exception:
+                        end_min = 0
+
+                    if start_min <= end_min:
+                        time_in = (mins >= start_min) & (mins <= end_min)
+                    else:
+                        time_in = (mins >= start_min) | (mins <= end_min)
+
+                    if days:
+                        try:
+                            names = idx_t.day_name().str.slice(0, 3)
+                        except Exception:
+                            names = pd.Series([ts.strftime('%a') for ts in idx_t], index=index)
+                        days_norm = [d[:3] for d in days]
+                        day_ok = names.isin(days_norm)
+                    else:
+                        day_ok = pd.Series([True] * len(idx), index=index)
+
+                    blackout_mask = blackout_mask | (time_in & day_ok)
+
+                allowed = allowed & (~blackout_mask)
+
+            # DAY/MONTH rules: if present, require matching any of them (OR semantics)
+            if daymonth_rules:
+                dm_mask = pd.Series([False] * len(idx), index=index)
+                for r in daymonth_rules:
+                    days = r.get('days') or []
+                    months = r.get('months') or []
+                    tzname = r.get('timezone') or default_tz
+                    idx_t = _to_tz(idx, tzname) if tzname else idx
+                    m_ok = pd.Series([True] * len(idx), index=index)
+                    d_ok = pd.Series([True] * len(idx), index=index)
+                    if days:
+                        if isinstance(days, str):
+                            days = [d.strip() for d in days.split(',') if d.strip()]
+                        try:
+                            names = idx_t.day_name().str.slice(0, 3)
+                        except Exception:
+                            names = pd.Series([ts.strftime('%a') for ts in idx_t], index=index)
+                        days_norm = [d[:3] for d in days]
+                        d_ok = names.isin(days_norm)
+                    if months:
+                        if isinstance(months, str):
+                            months = [m.strip() for m in months.split(',') if m.strip()]
+                        try:
+                            months_names = idx_t.month_name().str.slice(0, 3)
+                        except Exception:
+                            months_names = pd.Series([ts.strftime('%b') for ts in idx_t], index=index)
+                        months_norm = [m[:3] for m in months]
+                        m_ok = months_names.isin(months_norm)
+                    dm_mask = dm_mask | (d_ok & m_ok)
+                allowed = allowed & dm_mask
+
+            # Return a Series indexed by the original (possibly naive) index
+            return pd.Series(allowed.values, index=index)
         import pathlib
         ts = datetime.utcnow().isoformat().replace(':', '-')
         out_dir = pathlib.Path('tmp/guided_capture')
@@ -5596,13 +6435,13 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
             'draft_id': draft_id,
             'context_rules_json': form_dict.get('context_rules_json'),
             'signal_rules_json': form_dict.get('signal_rules_json'),
-            'trigger_rules_json': form_dict.get('trigger_rules_json')
+            'trigger_rules_json': form_dict.get('trigger_rules_json'),
+            'trade_filters_json': form_dict.get('trade_filters_json'),
         }, default=str))
     except Exception as _e:
         print('[guided-debug] submit form log failed', _e)
 
-    builder_mode = str(form_dict.get("builder_mode") or "").strip().lower()
-    if str(draft.get("template") or "").strip().lower() == "builder_v2" or builder_mode == "v2":
+    if builder_mode == "v2":
         def _parse_rules_json(field_name: str) -> list[dict[str, Any]]:
             raw = str(form_dict.get(field_name) or "").strip()
             if not raw:
@@ -5745,6 +6584,7 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
         context_rules = _parse_rules_json("context_rules_json")
         signal_rules = _parse_rules_json("signal_rules_json")
         extra_trigger_rules = _parse_rules_json("trigger_rules_json")
+        trade_filters = _parse_rules_json("trade_filters_json")
 
         # Normalize per-rule `side` values to a known set {'both','long','short'}
         def _normalize_rule_side_list(lst: list[dict[str, Any]] | None) -> None:
@@ -5769,6 +6609,64 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
         _normalize_rule_side_list(context_rules)
         _normalize_rule_side_list(signal_rules)
         _normalize_rule_side_list(extra_trigger_rules)
+        _normalize_rule_side_list(trade_filters)
+
+        # Derive max_trades_per_day from the existing Step 4 trade filter rule, if present.
+        # (The UI already provides this via Trade Filters -> "Max trades per day" with a `limit` field.)
+        max_trades_rule_limit: Any | None = None
+        try:
+            for rule in trade_filters:
+                if not isinstance(rule, dict):
+                    continue
+                if str(rule.get("type") or "").strip().lower() != "max_trades_per_day":
+                    continue
+                if rule.get("limit") is not None:
+                    max_trades_rule_limit = rule.get("limit")
+                elif isinstance(rule.get("params"), dict) and rule["params"].get("limit") is not None:
+                    max_trades_rule_limit = rule["params"].get("limit")
+        except Exception:
+            max_trades_rule_limit = None
+
+        if max_trades_rule_limit is None:
+            # No explicit rule => use schema default.
+            draft["max_trades_per_day"] = 1
+        else:
+            try:
+                derived_max_trades_per_day = int(str(max_trades_rule_limit).strip())
+            except Exception:
+                # Preserve rule lists so the UI re-renders what the user entered.
+                draft["context_rules"] = context_rules
+                draft["signal_rules"] = signal_rules
+                draft["trigger_rules"] = extra_trigger_rules
+                draft["trade_filters"] = trade_filters
+                return TEMPLATES.TemplateResponse(
+                    request,
+                    "guided_builder_v2.html",
+                    {
+                        "title": "Create Strategy (Guided)",
+                        "error": "Max trades per day must be an integer",
+                        "draft_id": draft_id,
+                        "draft": draft,
+                        "preview": _builder_v2_preview(draft),
+                    },
+                )
+            if derived_max_trades_per_day <= 0:
+                draft["context_rules"] = context_rules
+                draft["signal_rules"] = signal_rules
+                draft["trigger_rules"] = extra_trigger_rules
+                draft["trade_filters"] = trade_filters
+                return TEMPLATES.TemplateResponse(
+                    request,
+                    "guided_builder_v2.html",
+                    {
+                        "title": "Create Strategy (Guided)",
+                        "error": "Max trades per day must be >= 1",
+                        "draft_id": draft_id,
+                        "draft": draft,
+                        "preview": _builder_v2_preview(draft),
+                    },
+                )
+            draft["max_trades_per_day"] = int(derived_max_trades_per_day)
 
         # Debug: dump parsed rule objects for diagnostics
         try:
@@ -5778,6 +6676,7 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
                 'context_rules': context_rules,
                 'signal_rules': signal_rules,
                 'trigger_rules': extra_trigger_rules,
+                'trade_filters': trade_filters,
             }, default=str)[:8000])
         except Exception:
             pass
@@ -5811,6 +6710,7 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
                 "context_rules": context_rules,
                 "signal_rules": signal_rules,
                 "trigger_rules": extra_trigger_rules,
+                "trade_filters": trade_filters,
             }
         )
 
@@ -5983,14 +6883,15 @@ async def create_strategy_guided_step4_submit(request: Request, draft_id: str = 
         draft["long_conds"] = long_conds
         draft["short_conds"] = short_conds
 
-        url = f"/create-strategy-guided/step5?draft_id={draft_id}"
+        # Builder v2 flow: execution basics (holding style) comes after building signals/filters.
+        url = f"/create-strategy-guided/step4?draft_id={draft_id}"
         return TEMPLATES.TemplateResponse(
             request,
             "guided_redirect.html",
             {
                 "title": "Create Strategy (Guided)",
                 "url": url,
-                "message": "Opening Advanced settings (optional)…",
+                "message": "Opening Execution basics…",
                 "draft": draft,
             },
         )
@@ -6212,13 +7113,6 @@ async def create_strategy_guided_step5_advanced_submit(
         if account_size <= 0:
             raise ValueError("Account size must be > 0")
 
-        try:
-            max_trades_per_day = int(str(form_dict.get("max_trades_per_day") or draft.get("max_trades_per_day") or "1").strip())
-        except Exception:
-            max_trades_per_day = int(draft.get("max_trades_per_day") or 1)
-        if max_trades_per_day <= 0:
-            raise ValueError("Max trades per day must be >= 1")
-
         max_daily_loss_pct = None
         if bool(form_dict.get("max_daily_loss_enabled")):
             try:
@@ -6254,88 +7148,9 @@ async def create_strategy_guided_step5_advanced_submit(
 
         draft["sizing_mode"] = sizing_mode
         draft["account_size"] = float(account_size)
-        draft["max_trades_per_day"] = int(max_trades_per_day)
         draft["max_daily_loss_pct"] = max_daily_loss_pct
         draft["commissions"] = commissions
         draft["slippage_ticks"] = slippage_ticks
-
-        # --- Calendar filters ---
-        calendar_mode = str(form_dict.get("calendar_mode") or "disable").strip().lower()
-        if calendar_mode not in {"disable", "master", "custom"}:
-            calendar_mode = "disable"
-
-        draft["calendar_filters_mode"] = calendar_mode
-
-        if calendar_mode == "disable":
-            calendar_filters = {"master_filters_enabled": False}
-        elif calendar_mode == "master":
-            calendar_filters = {"master_filters_enabled": True}
-        else:
-            dow_raw = form.getlist("dow")
-            allowed_days: list[int] = []
-            for d in dow_raw:
-                try:
-                    di = int(str(d).strip())
-                except Exception:
-                    continue
-                if 0 <= di <= 6 and di not in allowed_days:
-                    allowed_days.append(di)
-
-            if not allowed_days:
-                raise ValueError("Please select at least one allowed day (Mon–Sun).")
-
-            sessions_enabled = {
-                "Asia": bool(form_dict.get("session_Asia")),
-                "London": bool(form_dict.get("session_London")),
-                "NewYork": bool(form_dict.get("session_NewYork")),
-            }
-
-            # Session window override (stored in UTC).
-            a_start_raw = form_dict.get("session_Asia_start")
-            a_end_raw = form_dict.get("session_Asia_end")
-            l_start_raw = form_dict.get("session_London_start")
-            l_end_raw = form_dict.get("session_London_end")
-            n_start_raw = form_dict.get("session_NewYork_start")
-            n_end_raw = form_dict.get("session_NewYork_end")
-
-            a_start_def, a_end_def = _session_default_times("Asia")
-            l_start_def, l_end_def = _session_default_times("London")
-            n_start_def, n_end_def = _session_default_times("NewYork")
-
-            a_start = _normalize_hhmm(a_start_raw) if a_start_raw is not None else _normalize_hhmm(a_start_def)
-            a_end = _normalize_hhmm(a_end_raw) if a_end_raw is not None else _normalize_hhmm(a_end_def)
-            l_start = _normalize_hhmm(l_start_raw) if l_start_raw is not None else _normalize_hhmm(l_start_def)
-            l_end = _normalize_hhmm(l_end_raw) if l_end_raw is not None else _normalize_hhmm(l_end_def)
-            n_start = _normalize_hhmm(n_start_raw) if n_start_raw is not None else _normalize_hhmm(n_start_def)
-            n_end = _normalize_hhmm(n_end_raw) if n_end_raw is not None else _normalize_hhmm(n_end_def)
-
-            if sessions_enabled.get("Asia") and (not a_start or not a_end):
-                raise ValueError("Asia session requires start and end times")
-            if sessions_enabled.get("London") and (not l_start or not l_end):
-                raise ValueError("London session requires start and end times")
-            if sessions_enabled.get("NewYork") and (not n_start or not n_end):
-                raise ValueError("NewYork session requires start and end times")
-
-            calendar_filters = {
-                "master_filters_enabled": True,
-                "day_of_week": {"enabled": True, "allowed_days": allowed_days},
-                "trading_sessions_enabled": True,
-                "trading_sessions": {
-                    "Asia": {"enabled": sessions_enabled["Asia"], "start": a_start, "end": a_end},
-                    "London": {"enabled": sessions_enabled["London"], "start": l_start, "end": l_end},
-                    "NewYork": {"enabled": sessions_enabled["NewYork"], "start": n_start, "end": n_end},
-                },
-            }
-
-            draft["calendar_allowed_days"] = allowed_days
-            draft["calendar_sessions"] = sessions_enabled
-            draft["calendar_session_times"] = {
-                "Asia": {"start": a_start, "end": a_end},
-                "London": {"start": l_start, "end": l_end},
-                "NewYork": {"start": n_start, "end": n_end},
-            }
-
-        draft["calendar_filters"] = calendar_filters
 
         # --- Stop loss ---
         stop_separate = bool(form_dict.get("stop_separate"))
@@ -6674,6 +7489,7 @@ def create_strategy_guided_review(request: Request, draft_id: str, message: str 
             "context_tf": (str(draft.get("context_tf") or "").strip() or None),
             "extra_tfs": [],
             "filters": {"calendar_filters": calendar_filters},
+            "trade_filters": draft.get("trade_filters") if isinstance(draft.get("trade_filters"), list) else [],
             "execution": {
                 "flatten_enabled": bool(draft.get("flatten_enabled")) if draft.get("flatten_enabled") is not None else None,
                 "flatten_time": draft.get("flatten_time"),
@@ -6846,6 +7662,7 @@ async def create_strategy_guided_run(
         "context_tf": (str(draft.get("context_tf") or "").strip() or None),
         "extra_tfs": [],
         "filters": {"calendar_filters": calendar_filters},
+        "trade_filters": draft.get("trade_filters") if isinstance(draft.get("trade_filters"), list) else [],
         "execution": {
             "flatten_enabled": bool(draft.get("flatten_enabled")) if draft.get("flatten_enabled") is not None else None,
             "flatten_time": draft.get("flatten_time"),
@@ -6979,6 +7796,7 @@ async def create_strategy_guided_run(
             "context_rules": draft.get("context_rules") if isinstance(draft.get("context_rules"), list) else [],
             "signal_rules": draft.get("signal_rules") if isinstance(draft.get("signal_rules"), list) else [],
             "trigger_rules": draft.get("trigger_rules") if isinstance(draft.get("trigger_rules"), list) else [],
+            "trade_filters": draft.get("trade_filters") if isinstance(draft.get("trade_filters"), list) else [],
         }
         repo_spec = _write_validated_spec_to_repo(spec=spec, old_spec_name=old_spec_name, extra_meta=extra)
     except ValueError as e:
